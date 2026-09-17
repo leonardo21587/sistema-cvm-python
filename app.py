@@ -2158,9 +2158,9 @@ if empresa_selecionada is not None:
 
         st.caption(
             f"VA = Valor Absoluto em R$ mil | "
-            f"AV = Análise Vertical | "
-            f"AH = índice base fixa "
-            f"{ano_base} = 100"
+            f"AV = Análise Vertical (%) | "
+            f"AH = Análise Horizontal — índice base fixa "
+            f"{ano_base} = 100%"
         )
 
         renderizar_tabela_padronizada(
@@ -2204,9 +2204,9 @@ if empresa_selecionada is not None:
 
         st.caption(
             f"VA = Valor Absoluto em R$ mil | "
-            f"AV = Análise Vertical | "
-            f"AH = índice base fixa "
-            f"{ano_base} = 100"
+            f"AV = Análise Vertical (%) | "
+            f"AH = Análise Horizontal — índice base fixa "
+            f"{ano_base} = 100%"
         )
 
         renderizar_tabela_padronizada(
@@ -2249,9 +2249,9 @@ if empresa_selecionada is not None:
 
         st.caption(
             f"VA = Valor Absoluto em R$ mil | "
-            f"AV = Análise Vertical | "
-            f"AH = índice base fixa "
-            f"{ano_base} = 100"
+            f"AV = Análise Vertical (%) | "
+            f"AH = Análise Horizontal — índice base fixa "
+            f"{ano_base} = 100%"
         )
 
         renderizar_tabela_padronizada(

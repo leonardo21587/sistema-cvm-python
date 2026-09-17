@@ -1,6 +1,9 @@
 # Sistema CVM — Análise Financeira
 
-Sistema acadêmico de análise financeira desenvolvido em Python e Streamlit a partir de demonstrações financeiras padronizadas (DFP) consolidadas divulgadas pela CVM.
+Sistema acadêmico de análise financeira desenvolvido em Python e Streamlit a partir de Demonstrações Financeiras Padronizadas (DFP) consolidadas divulgadas pela CVM.
+
+**Curso:** Ciências Econômicas — UFSJ  
+**Acesso público:** https://indicadores-financeiros-cvm.streamlit.app
 
 ## Objetivo
 
@@ -16,7 +19,7 @@ Permitir a consulta de companhias do catálogo CVM e apresentar, de forma integr
 - dashboard interativo;
 - relatório automático de análise financeira;
 - validações e auditoria;
-- exportação da análise para Excel.
+- exportação completa para Excel.
 
 ## Período da versão atual
 
@@ -27,6 +30,14 @@ A versão atual utiliza como período principal:
 - 2025.
 
 Para indicadores que exigem saldo médio, o sistema utiliza 2022 como ano auxiliar quando aplicável.
+
+## Apresentação das análises
+
+- **VA — Valor Absoluto:** valores monetários em R$ mil, exibidos com duas casas decimais.
+- **AV — Análise Vertical:** apresentada em percentual.
+- **AH — Análise Horizontal:** índice de base fixa, com o primeiro exercício igual a 100%. Assim, por exemplo, `108,17%` significa que o valor corresponde a 108,17% do ano-base, ou crescimento de 8,17% em relação a ele.
+
+A exportação para Excel segue a mesma lógica de apresentação usada no sistema web.
 
 ## Indicadores
 
@@ -60,8 +71,11 @@ A decomposição DuPont utiliza:
 ```text
 Sistema-CVM-Python/
 ├── app.py
-├── requirements.txt
 ├── README.md
+├── requirements.txt
+├── assets/
+│   └── logo_ufsj.png
+├── config/
 ├── src/
 │   ├── banco.py
 │   ├── demonstracoes.py
@@ -80,12 +94,13 @@ Sistema-CVM-Python/
     └── processed/
         ├── dfp_2023_2025.parquet
         ├── empresas.parquet
-        └── saldos_auxiliares_2022.parquet
+        ├── saldos_auxiliares_2022.parquet
+        └── sistema_cvm.duckdb
 ```
 
 ## Auditoria
 
-Antes da publicação, a versão atual foi submetida a uma auditoria adversarial automatizada.
+Antes da publicação, a versão foi submetida a uma auditoria adversarial automatizada.
 
 Resultado da varredura completa:
 
@@ -113,7 +128,7 @@ A auditoria incluiu situações como:
 
 Recomenda-se Python 3.12.
 
-Crie ou ative um ambiente virtual e instale as dependências:
+Instale as dependências:
 
 ```bash
 pip install -r requirements.txt
@@ -145,6 +160,8 @@ O relatório automático utiliza regras determinísticas. Ele não atribui uma n
 
 ## Natureza do projeto
 
-Projeto acadêmico desenvolvido para a disciplina de Administração Financeira.
+Projeto acadêmico desenvolvido para a disciplina de Administração Financeira no curso de Ciências Econômicas da UFSJ.
+
+A identificação visual da UFSJ é utilizada no contexto acadêmico do projeto. Este repositório não constitui página institucional da Universidade.
 
 Não constitui recomendação de investimento.

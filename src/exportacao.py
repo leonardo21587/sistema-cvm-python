@@ -252,16 +252,17 @@ def _formato_numero_tabela(
         return "0"
 
     if nome.startswith("VA_"):
-        return '#,##0;(#,##0);0'
+        return '#,##0.00;(#,##0.00);0.00'
 
     # AV já está armazenada em pontos percentuais (ex.: 21,14).
     # O símbolo é literal para não multiplicar o valor por 100 outra vez.
     if nome.startswith("AV_"):
         return '0.00"%"'
 
-    # AH é índice base fixa (base = 100), não percentual Excel.
+    # AH já está armazenada como índice base fixa (ex.: 108,17).
+    # O símbolo é literal para exibir 108,17% sem multiplicar por 100.
     if nome.startswith("AH_"):
-        return "0.00"
+        return '0.00"%"'
 
     indicador = ""
     unidade = ""
