@@ -345,9 +345,9 @@ def formatar_va(valor):
         return "N/D"
 
     if valor == 0:
-        return "0"
+        return "0,00"
 
-    texto = f"{abs(valor):,.0f}"
+    texto = f"{abs(valor):,.2f}"
 
     texto = (
         texto
