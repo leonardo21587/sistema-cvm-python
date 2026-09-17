@@ -1441,11 +1441,13 @@ with col_ufsj:
     st.markdown(
         """
         <div style="
+            width:285px;
+            margin:0 auto 0.25rem auto;
             text-align:center;
-            font-size:1.00rem;
+            font-size:1.56rem;
             font-weight:650;
+            letter-spacing:0.035em;
             color:#374151;
-            margin-bottom:0.25rem;
             white-space:nowrap;
         ">
             Ciências Econômicas
