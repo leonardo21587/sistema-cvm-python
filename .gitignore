@@ -1,0 +1,52 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / sistema operacional
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Dados brutos e temporários
+data/raw/
+data/cache/
+data/temp/
+data/tmp/
+
+# Mantém apenas os arquivos processados necessários ao app
+data/processed/*
+!data/processed/dfp_2023_2025.parquet
+!data/processed/empresas.parquet
+!data/processed/saldos_auxiliares_2022.parquet
+
+# Resultados locais de auditoria
+data/processed/auditoria_adversarial_*.csv
+data/processed/auditoria_saldos_auxiliares_*.csv
+
+# Arquivos temporários de Excel
+~$*.xlsx
+*.tmp
+
+# Logs
+*.log
+
+# Builds / distribuição
+build/
+dist/
+*.egg-info/
+
+# Backups locais
+*_backup.py
