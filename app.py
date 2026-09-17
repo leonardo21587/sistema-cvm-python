@@ -1418,8 +1418,8 @@ LOGO_UFSJ = (
 )
 
 col_titulo, col_ufsj = st.columns(
-    [6.15, 0.85],
-    gap="medium",
+    [5.15, 1.85],
+    gap="large",
     vertical_alignment="center",
 )
 
@@ -1442,10 +1442,10 @@ with col_ufsj:
         """
         <div style="
             text-align:center;
-            font-size:0.80rem;
-            font-weight:600;
-            color:#4b5563;
-            margin-bottom:0.05rem;
+            font-size:1.00rem;
+            font-weight:650;
+            color:#374151;
+            margin-bottom:0.25rem;
             white-space:nowrap;
         ">
             Ciências Econômicas
@@ -1458,7 +1458,7 @@ with col_ufsj:
 
         st.image(
             str(LOGO_UFSJ),
-            width=112,
+            width=285,
         )
 
     else:
@@ -1467,7 +1467,7 @@ with col_ufsj:
             """
             <div style="
                 text-align:center;
-                font-size:0.78rem;
+                font-size:0.90rem;
                 color:#6b7280;
                 margin-top:0.15rem;
             ">
