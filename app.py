@@ -379,7 +379,7 @@ def formatar_ah(valor):
         return "N/D"
 
     return (
-        f"{float(valor):.2f}"
+        f"{float(valor):.2f}%"
         .replace(".", ",")
     )
 
