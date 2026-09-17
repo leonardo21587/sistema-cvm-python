@@ -31,6 +31,15 @@ from src.graficos import (
     montar_graficos_dashboard,
 )
 
+from src.validacao import (
+    validar_empresa,
+)
+
+from src.exportacao import (
+    gerar_excel_sistema,
+    nome_arquivo_exportacao,
+)
+
 
 # ============================================================
 # CONFIGURAÇÃO
@@ -673,6 +682,20 @@ def carregar_relatorio(
     return gerar_relatorio(
         cd_cvm=cd_cvm,
         nome_empresa=nome_empresa,
+        anos=list(
+            anos_tuple
+        ),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def carregar_validacao(
+    cd_cvm,
+    anos_tuple,
+):
+
+    return validar_empresa(
+        cd_cvm=cd_cvm,
         anos=list(
             anos_tuple
         ),
@@ -1862,6 +1885,13 @@ if empresa_selecionada is not None:
                 )
             )
 
+            validacao = (
+                carregar_validacao(
+                    cd_cvm,
+                    anos_tuple,
+                )
+            )
+
             cards_dashboard = (
                 montar_cards_dashboard(
                     quadro_inds,
@@ -1888,6 +1918,123 @@ if empresa_selecionada is not None:
         )
 
         st.stop()
+
+
+    # ========================================================
+    # EXPORTAÇÃO
+    # ========================================================
+
+    identificacao_exportacao = {
+        "DENOM_CIA": nome,
+        "CD_CVM": cd_cvm,
+        "CNPJ_CIA": cnpj,
+    }
+
+    try:
+
+        arquivo_excel = (
+            gerar_excel_sistema(
+                identificacao=identificacao_exportacao,
+                bp_ativo=bpa,
+                bp_passivo=bpp,
+                dre=dre,
+                indicadores=quadro_inds,
+                relatorio=relatorio,
+                validacao=validacao,
+                anos=list(
+                    anos_tuple
+                ),
+                status_validacao=relatorio[
+                    "STATUS_VALIDACAO"
+                ],
+            )
+        )
+
+        nome_arquivo_excel = (
+            nome_arquivo_exportacao(
+                identificacao_exportacao,
+                anos=list(
+                    anos_tuple
+                ),
+            )
+        )
+
+        erro_exportacao = None
+
+    except Exception as erro:
+
+        arquivo_excel = None
+        nome_arquivo_excel = None
+        erro_exportacao = erro
+
+
+    st.divider()
+
+    st.markdown(
+        "### Exportar análise"
+    )
+
+    coluna_exportar, coluna_descricao = (
+        st.columns(
+            [
+                1,
+                3,
+            ]
+        )
+    )
+
+    with coluna_exportar:
+
+        if arquivo_excel is not None:
+
+            st.download_button(
+                label="Exportar Excel completo",
+                data=arquivo_excel,
+                file_name=nome_arquivo_excel,
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True,
+                type="primary",
+                key=(
+                    f"download_excel_"
+                    f"{cd_cvm}_"
+                    f"{ano_recente}"
+                ),
+            )
+
+        else:
+
+            st.button(
+                "Exportação indisponível",
+                disabled=True,
+                use_container_width=True,
+            )
+
+    with coluna_descricao:
+
+        st.caption(
+            "O arquivo inclui Identificação, BP Ativo, BP Passivo, "
+            "DRE, os 12 Indicadores, Relatório e Validação/Auditoria. "
+            "A exportação utiliza os mesmos resultados exibidos no "
+            "sistema e não recalcula os indicadores."
+        )
+
+        if erro_exportacao is not None:
+
+            st.warning(
+                "A análise permanece disponível no sistema, "
+                "mas não foi possível gerar o arquivo Excel."
+            )
+
+            with st.expander(
+                "Detalhes técnicos da exportação"
+            ):
+
+                st.exception(
+                    erro_exportacao
+                )
 
 
     # ========================================================
