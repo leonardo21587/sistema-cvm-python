@@ -1022,6 +1022,21 @@ def gerar_excel_sistema(
                     coluna
                 ].astype("object")
 
+                if (
+                    layout_financeiro
+                    and coluna in {
+                        "BASE",
+                        "INTERMEDIARIO",
+                        "RECENTE",
+                    }
+                ):
+                    indicadores_exportacao.loc[
+                        indicadores_exportacao[
+                            coluna
+                        ].isna(),
+                        coluna,
+                    ] = "N/D"
+
                 indicadores_exportacao.loc[
                     mascara_na,
                     coluna,
@@ -1068,6 +1083,17 @@ def gerar_excel_sistema(
             relatorio_exportacao[
                 "VALIDACAO"
             ] = validacao_exportacao
+
+        if (
+            "ANALISE_INDICADORES" in relatorio_exportacao
+            and isinstance(
+                indicadores_exportacao,
+                pd.DataFrame,
+            )
+        ):
+            relatorio_exportacao[
+                "ANALISE_INDICADORES"
+            ] = indicadores_exportacao.copy()
 
     ws_rel = wb.create_sheet("Relatório")
     _escrever_relatorio(
