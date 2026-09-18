@@ -35,6 +35,7 @@ from src.relatorio import (
 )
 
 from src.relatorio_financeiro import (
+    formatar_delta_pp,
     gerar_relatorio_financeiro,
 )
 
@@ -634,19 +635,13 @@ def exibir_cards_financeiros_setoriais(
                 st.caption(f"Valor de {ano_recente}.")
                 continue
 
-            delta_pp = (
-                (
-                    float(linha_rec["VALOR"])
-                    - float(linha_base["VALOR"])
-                )
-                * 100
+            delta_pp = formatar_delta_pp(
+                linha_base["VALOR"],
+                linha_rec["VALOR"],
             )
 
             st.caption(
-                (
-                    f"vs. {ano_base}: "
-                    f"{delta_pp:+.2f} p.p."
-                ).replace(".", ",")
+                f"vs. {ano_base}: {delta_pp}"
             )
 
 

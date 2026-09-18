@@ -108,7 +108,7 @@ def _fmt_pct(valor) -> str:
     )
 
 
-def _delta_pp(a, b) -> str:
+def formatar_delta_pp(a, b) -> str:
     a = _numero(a)
     b = _numero(b)
 
@@ -125,10 +125,12 @@ def _delta_pp(a, b) -> str:
         else ""
     )
 
-    return (
-        f"{sinal}{delta:.2f} p.p."
+    numero = (
+        f"{delta:.2f}"
         .replace(".", ",")
     )
+
+    return f"{sinal}{numero} p.p."
 
 
 def _tolerancia(
@@ -582,7 +584,7 @@ def _linha_analise(
             recente,
         )
 
-        delta = _delta_pp(
+        delta = formatar_delta_pp(
             interm,
             recente,
         )
@@ -628,7 +630,7 @@ def _linha_analise(
             recente,
         )
 
-        delta = _delta_pp(
+        delta = formatar_delta_pp(
             base,
             recente,
         )
@@ -1102,5 +1104,6 @@ def gerar_relatorio_financeiro(
 
 
 __all__ = [
+    "formatar_delta_pp",
     "gerar_relatorio_financeiro",
 ]
