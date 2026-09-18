@@ -22,6 +22,7 @@ from src.indicadores import (
     validar_dupont,
 )
 from src.layouts_cvm import (
+    LAYOUT_FINANCEIRA,
     LAYOUT_PADRAO,
     detectar_layout,
     normalizar_descricao,
@@ -554,6 +555,22 @@ def _validar_av(
     ano: int,
     layout,
 ) -> dict[str, object]:
+    if (
+        demonstracao == "DRE"
+        and layout.codigo == LAYOUT_FINANCEIRA
+    ):
+        return _linha(
+            "AV",
+            f"Base AV {demonstracao}",
+            "INFO",
+            (
+                "Análise vertical da DRE = N/A para o layout "
+                "FINANCEIRA; a estrutura setorial não utiliza "
+                "Receita Líquida tradicional como base."
+            ),
+            ano,
+        )
+
     av = calcular_analise_vertical(
         cd_cvm,
         demonstracao,

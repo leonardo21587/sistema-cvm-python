@@ -4146,8 +4146,62 @@ O relatório é gerado por regras determinísticas.
             )
         )
 
-        st.markdown(
-            f"""
+        if "FINANCEIRA" in layouts_detectados:
+            st.markdown(
+                f"""
+**Empresa:** {nome}
+
+**CD_CVM:** {cd_cvm}
+
+**Período:** {periodo_texto}
+
+**Unidade das demonstrações:** R$ mil
+
+**Layout CVM:** FINANCEIRA
+
+### Análise Vertical
+
+- BP Ativo: rubrica / Ativo Total.
+- BP Passivo: rubrica / Passivo Total.
+- DRE: N/A; o layout financeiro não utiliza Receita Líquida tradicional como base.
+
+### Análise Horizontal
+
+- índice de base fixa;
+- ano-base = {ano_base} = 100;
+- o ano-base não exibe AH;
+- base zero ou ausente = N/D.
+
+### Indicadores
+
+- Capitalização e Funding: CAP_CONTABIL e PF_ATIVO.
+- Crescimento: CRESC_ATIVO, CRESC_PL e CRESC_LL.
+- Intermediação e Rentabilidade: RBI_ATIVO_MEDIO, PRETRIB_ATIVO_MEDIO, ROA e ROE.
+- ROA e ROE são fornecidos pelo motor de indicadores existente quando aplicáveis.
+- Indicadores tradicionais incompatíveis permanecem N/A na metodologia e na auditoria.
+- DuPont: N/A para o layout FINANCEIRA.
+
+### Painel
+
+- consome os resultados oficiais dos indicadores aplicáveis;
+- gráficos em ordem cronológica;
+- não utiliza semáforos de desempenho financeiro;
+- variações dos cards são informativas e não representam julgamento;
+- N/D e N/A são preservados e nunca convertidos em zero.
+
+### Relatório
+
+- utiliza exclusivamente os 9 indicadores financeiros aplicáveis;
+- utiliza regras narrativas determinísticas;
+- identifica trajetórias;
+- mostra variação base → recente;
+- não exibe indicadores tradicionais incompatíveis nem DuPont;
+- não atribui notas ou semáforos financeiros arbitrários.
+                """
+            )
+        else:
+            st.markdown(
+                f"""
 **Empresa:** {nome}
 
 **CD_CVM:** {cd_cvm}
@@ -4192,8 +4246,8 @@ O relatório é gerado por regras determinísticas.
 - mostra variação base → recente;
 - integra validação e DuPont;
 - não atribui notas ou semáforos financeiros arbitrários.
-            """
-        )
+                """
+            )
 
         st.warning(
             "Dado ausente não é convertido em zero. "
