@@ -2618,170 +2618,152 @@ if empresa_selecionada is not None:
                 "continuam classificados como N/A."
             )
 
-        # === B3_UI_FINANCEIRA ===
-        if (
-            "FINANCEIRA"
-            in layouts_detectados
-        ):
-            st.markdown(
-                "## Rentabilidade"
+        # ----------------------------------------------------
+        # ESTRUTURA
+        # ----------------------------------------------------
+
+        st.markdown(
+            "## Estrutura de Capital"
+        )
+
+        exibir_cards_dashboard(
+            cards_dashboard,
+            [
+                "IPL",
+                "PCT",
+                "CE",
+                "EFSAT",
+            ],
+            ano_base,
+        )
+
+        exibir_grafico_dashboard(
+            graficos_dashboard[
+                "estrutura"
+            ],
+            key="grafico_estrutura_dashboard",
+        )
+
+        st.caption(
+            "IPL, PCT, CE e EFSAT são apresentados "
+            "em percentual. PCT, CE e EFSAT exigem "
+            "interpretação contextual."
+        )
+
+
+        st.divider()
+
+
+        # ----------------------------------------------------
+        # LIQUIDEZ
+        # ----------------------------------------------------
+
+        st.markdown(
+            "## Liquidez"
+        )
+
+        exibir_cards_dashboard(
+            cards_dashboard,
+            [
+                "LG",
+                "LC",
+                "LS",
+                "ICJ",
+            ],
+            ano_base,
+        )
+
+        coluna_liquidez, coluna_icj = (
+            st.columns(
+                [
+                    2,
+                    1,
+                ]
+            )
+        )
+
+        with coluna_liquidez:
+
+            exibir_grafico_dashboard(
+                graficos_dashboard[
+                    "liquidez"
+                ],
+                key="grafico_liquidez_dashboard",
             )
 
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "ROA",
-                    "ROE",
+        with coluna_icj:
+
+            exibir_grafico_dashboard(
+                graficos_dashboard[
+                    "icj"
                 ],
-                ano_base,
+                key="grafico_icj_dashboard",
             )
+
+        st.caption(
+            "LG, LC e LS são razões. "
+            "O ICJ é apresentado separadamente "
+            "por possuir escala própria em vezes."
+        )
+
+
+        st.divider()
+
+
+        # ----------------------------------------------------
+        # DESEMPENHO
+        # ----------------------------------------------------
+
+        st.markdown(
+            "## Lucratividade e Desempenho"
+        )
+
+        exibir_cards_dashboard(
+            cards_dashboard,
+            [
+                "GA",
+                "RSV",
+                "ROA",
+                "ROE",
+            ],
+            ano_base,
+        )
+
+        coluna_rentabilidade, coluna_ga = (
+            st.columns(
+                [
+                    2,
+                    1,
+                ]
+            )
+        )
+
+        with coluna_rentabilidade:
 
             exibir_grafico_dashboard(
                 graficos_dashboard[
                     "rentabilidade"
                 ],
-                key="grafico_rentabilidade_financeira",
+                key="grafico_rentabilidade_dashboard",
             )
 
-            st.caption(
-                "ROA e ROE permanecem calculados pelo "
-                "motor original já validado. Os demais "
-                "indicadores tradicionais incompatíveis "
-                "ficam disponíveis apenas na auditoria metodológica."
-            )
-
-            st.divider()
-
-        else:
-            st.markdown(
-                "## Estrutura de Capital"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "IPL",
-                    "PCT",
-                    "CE",
-                    "EFSAT",
-                ],
-                ano_base,
-            )
+        with coluna_ga:
 
             exibir_grafico_dashboard(
                 graficos_dashboard[
-                    "estrutura"
+                    "ga"
                 ],
-                key="grafico_estrutura_dashboard",
+                key="grafico_ga_dashboard",
             )
 
-            st.caption(
-                "IPL, PCT, CE e EFSAT são apresentados "
-                "em percentual. PCT, CE e EFSAT exigem "
-                "interpretação contextual."
-            )
+        st.caption(
+            "RSV, ROA e ROE são percentuais. "
+            "O Giro do Ativo é apresentado separadamente "
+            "por utilizar unidade em vezes."
+        )
 
-            st.divider()
 
-            st.markdown(
-                "## Liquidez"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "LG",
-                    "LC",
-                    "LS",
-                    "ICJ",
-                ],
-                ano_base,
-            )
-
-            coluna_liquidez, coluna_icj = (
-                st.columns(
-                    [
-                        2,
-                        1,
-                    ]
-                )
-            )
-
-            with coluna_liquidez:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "liquidez"
-                    ],
-                    key="grafico_liquidez_dashboard",
-                )
-
-            with coluna_icj:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "icj"
-                    ],
-                    key="grafico_icj_dashboard",
-                )
-
-            st.caption(
-                "LG, LC e LS são razões. "
-                "O ICJ é apresentado separadamente "
-                "por possuir escala própria em vezes."
-            )
-
-            st.divider()
-
-            st.markdown(
-                "## Lucratividade e Desempenho"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "GA",
-                    "RSV",
-                    "ROA",
-                    "ROE",
-                ],
-                ano_base,
-            )
-
-            coluna_rentabilidade, coluna_ga = (
-                st.columns(
-                    [
-                        2,
-                        1,
-                    ]
-                )
-            )
-
-            with coluna_rentabilidade:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "rentabilidade"
-                    ],
-                    key="grafico_rentabilidade_dashboard",
-                )
-
-            with coluna_ga:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "ga"
-                    ],
-                    key="grafico_ga_dashboard",
-                )
-
-            st.caption(
-                "RSV, ROA e ROE são percentuais. "
-                "O Giro do Ativo é apresentado separadamente "
-                "por utilizar unidade em vezes."
-            )
-
-            st.divider()
+        st.divider()
 
 
         # ----------------------------------------------------
@@ -3036,84 +3018,6 @@ if empresa_selecionada is not None:
                 "Indicadores não disponíveis."
             )
 
-        elif (
-            "FINANCEIRA"
-            in layouts_detectados
-        ):
-            st.markdown(
-                "### Rentabilidade tradicional aplicável"
-            )
-
-            quadro_roa_roe = (
-                quadro_inds.loc[
-                    quadro_inds[
-                        "INDICADOR"
-                    ].isin(
-                        [
-                            "ROA",
-                            "ROE",
-                        ]
-                    )
-                ]
-                .copy()
-            )
-
-            tabela_roa_roe = (
-                tabela_indicadores_grupo(
-                    quadro_roa_roe,
-                    "Lucratividade/Desempenho",
-                    anos_desc,
-                )
-            )
-
-            st.dataframe(
-                tabela_roa_roe,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            with st.expander(
-                "Indicadores tradicionais não aplicáveis — auditoria metodológica"
-            ):
-                quadro_na = (
-                    quadro_inds.loc[
-                        quadro_inds[
-                            "APLICABILIDADE"
-                        ].eq(
-                            "NAO_APLICAVEL"
-                        )
-                    ]
-                    .copy()
-                )
-
-                for grupo_na in [
-                    "Estrutura de Capital",
-                    "Liquidez",
-                    "Lucratividade/Desempenho",
-                ]:
-                    tabela_na = (
-                        tabela_indicadores_grupo(
-                            quadro_na,
-                            grupo_na,
-                            anos_desc,
-                        )
-                    )
-
-                    if tabela_na.empty:
-                        continue
-
-                    st.markdown(
-                        f"#### {grupo_na}"
-                    )
-
-                    st.dataframe(
-                        tabela_na,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-            st.divider()
-
         else:
 
             for grupo in [
@@ -3164,15 +3068,7 @@ if empresa_selecionada is not None:
                     st.selectbox(
                         "Indicador",
                         options=(
-                            [
-                                "ROA",
-                                "ROE",
-                            ]
-                            if (
-                                "FINANCEIRA"
-                                in layouts_detectados
-                            )
-                            else ORDEM_INDICADORES
+                            ORDEM_INDICADORES
                         ),
                         format_func=lambda x: (
                             f"{x} — "

@@ -23,13 +23,6 @@ from src.indicadores import (
     validar_dupont,
 )
 
-# === B2_INDICADORES_FINANCEIROS ===
-from src.indicadores_financeiros import (
-    INDICADORES_FINANCEIROS,
-    NOMES as NOMES_INDICADORES_FINANCEIROS,
-    calcular_indicadores_financeiros,
-)
-
 from src.relatorio import (
     gerar_relatorio,
 )
@@ -424,227 +417,6 @@ def formatar_indicador(
     )
 
 
-def formatar_percentual_setorial(
-    valor,
-    status="OK",
-):
-    status = str(status).strip().upper()
-
-    if status in {"N/A", "N/D"}:
-        return status
-
-    if valor is None or pd.isna(valor):
-        return "N/D"
-
-    return (
-        f"{float(valor) * 100:.2f}%"
-        .replace(".", ",")
-    )
-
-
-def tabela_indicadores_financeiros_setoriais(
-    dados,
-    grupo,
-    anos_desc,
-):
-    if dados is None or dados.empty:
-        return pd.DataFrame()
-
-    parte = dados.loc[
-        dados["GRUPO"].eq(grupo)
-    ].copy()
-
-    if parte.empty:
-        return pd.DataFrame()
-
-    ordem = {
-        codigo: indice
-        for indice, codigo in enumerate(
-            INDICADORES_FINANCEIROS
-        )
-    }
-
-    codigos = (
-        parte[
-            ["INDICADOR", "NOME", "UNIDADE", "FORMULA"]
-        ]
-        .drop_duplicates(subset=["INDICADOR"])
-        .assign(
-            _ORDEM=lambda d: d["INDICADOR"].map(ordem)
-        )
-        .sort_values("_ORDEM")
-    )
-
-    registros = []
-
-    for _, meta in codigos.iterrows():
-        codigo = str(meta["INDICADOR"])
-
-        registro = {
-            "Sigla": codigo,
-            "Indicador": meta["NOME"],
-            "Unidade": meta["UNIDADE"],
-        }
-
-        for ano in anos_desc:
-            linha_ano = parte.loc[
-                parte["INDICADOR"].eq(codigo)
-                & parte["ANO"].eq(int(ano))
-            ]
-
-            if linha_ano.empty:
-                registro[str(ano)] = "N/D"
-                continue
-
-            linha = linha_ano.iloc[0]
-
-            registro[str(ano)] = (
-                formatar_percentual_setorial(
-                    linha["VALOR"],
-                    linha["STATUS"],
-                )
-            )
-
-        recente = parte.loc[
-            parte["INDICADOR"].eq(codigo)
-            & parte["ANO"].eq(max(anos_desc))
-        ]
-
-        if recente.empty:
-            registro["Status recente"] = "N/D"
-            registro["Observação"] = "Exercício recente não disponível."
-        else:
-            linha_rec = recente.iloc[0]
-            registro["Status recente"] = str(
-                linha_rec["STATUS"]
-            )
-
-            motivo = linha_rec.get(
-                "MOTIVO",
-                None,
-            )
-
-            registro["Observação"] = (
-                ""
-                if (
-                    motivo is None
-                    or pd.isna(motivo)
-                )
-                else str(motivo)
-            )
-
-        registros.append(registro)
-
-    return pd.DataFrame(registros)
-
-
-def exibir_cards_financeiros_setoriais(
-    dados,
-    codigos,
-    ano_base,
-    ano_recente,
-):
-    if dados is None or dados.empty:
-        return
-
-    colunas = st.columns(len(codigos))
-
-    for indice, codigo in enumerate(codigos):
-        recente = dados.loc[
-            dados["INDICADOR"].eq(codigo)
-            & dados["ANO"].eq(int(ano_recente))
-        ]
-
-        base = dados.loc[
-            dados["INDICADOR"].eq(codigo)
-            & dados["ANO"].eq(int(ano_base))
-        ]
-
-        with colunas[indice]:
-            if recente.empty:
-                st.metric(
-                    label=(
-                        f"{codigo} — "
-                        f"{NOMES_INDICADORES_FINANCEIROS[codigo]}"
-                    ),
-                    value="N/D",
-                )
-                st.caption("Exercício recente não disponível.")
-                continue
-
-            linha_rec = recente.iloc[0]
-            status = str(
-                linha_rec["STATUS"]
-            ).strip().upper()
-
-            valor_fmt = formatar_percentual_setorial(
-                linha_rec["VALOR"],
-                status,
-            )
-
-            st.metric(
-                label=(
-                    f"{codigo} — "
-                    f"{NOMES_INDICADORES_FINANCEIROS[codigo]}"
-                ),
-                value=valor_fmt,
-            )
-
-            if status != "OK":
-                motivo = linha_rec.get(
-                    "MOTIVO",
-                    None,
-                )
-
-                st.caption(
-                    str(motivo)
-                    if (
-                        motivo is not None
-                        and not pd.isna(motivo)
-                    )
-                    else status
-                )
-                continue
-
-            if codigo in {
-                "CRESC_ATIVO",
-                "CRESC_PL",
-                "CRESC_LL",
-            }:
-                st.caption(
-                    f"Variação {ano_recente - 1} → {ano_recente}."
-                )
-                continue
-
-            if base.empty:
-                st.caption(f"Valor de {ano_recente}.")
-                continue
-
-            linha_base = base.iloc[0]
-
-            if (
-                str(linha_base["STATUS"]).strip().upper() != "OK"
-                or pd.isna(linha_base["VALOR"])
-            ):
-                st.caption(f"Valor de {ano_recente}.")
-                continue
-
-            delta_pp = (
-                (
-                    float(linha_rec["VALOR"])
-                    - float(linha_base["VALOR"])
-                )
-                * 100
-            )
-
-            st.caption(
-                (
-                    f"vs. {ano_base}: "
-                    f"{delta_pp:+.2f} p.p."
-                ).replace(".", ",")
-            )
-
-
 def formatar_raw(valor):
 
     if pd.isna(valor):
@@ -919,20 +691,6 @@ def carregar_indicadores(
 ):
 
     return quadro_indicadores(
-        cd_cvm,
-        anos=list(
-            anos_tuple
-        ),
-    )
-
-
-@st.cache_data(show_spinner=False)
-def carregar_indicadores_financeiros_setoriais(
-    cd_cvm,
-    anos_tuple,
-):
-
-    return calcular_indicadores_financeiros(
         cd_cvm,
         anos=list(
             anos_tuple
@@ -2246,59 +2004,6 @@ if empresa_selecionada is not None:
         )
     )
 
-    indicadores_fin_setoriais = pd.DataFrame()
-    erro_indicadores_fin_setoriais = None
-    qtd_indicadores_financeiros_disponiveis = 0
-
-    if "FINANCEIRA" in layouts_detectados:
-        try:
-            indicadores_fin_setoriais = (
-                carregar_indicadores_financeiros_setoriais(
-                    cd_cvm,
-                    anos_tuple,
-                )
-            )
-
-            setoriais_recentes = (
-                indicadores_fin_setoriais.loc[
-                    indicadores_fin_setoriais["ANO"].eq(
-                        int(ano_recente)
-                    )
-                    & indicadores_fin_setoriais["STATUS"].eq(
-                        "OK"
-                    )
-                ]
-            )
-
-            qtd_setoriais_ok = int(
-                setoriais_recentes["INDICADOR"].nunique()
-            )
-
-            tradicionais_fin = (
-                quadro_inds.loc[
-                    quadro_inds["INDICADOR"].isin(
-                        ["ROA", "ROE"]
-                    )
-                ]
-            )
-
-            qtd_trad_fin_ok = 0
-
-            if ano_recente in tradicionais_fin.columns:
-                qtd_trad_fin_ok = int(
-                    tradicionais_fin[ano_recente]
-                    .notna()
-                    .sum()
-                )
-
-            qtd_indicadores_financeiros_disponiveis = (
-                qtd_setoriais_ok
-                + qtd_trad_fin_ok
-            )
-
-        except Exception as erro:
-            erro_indicadores_fin_setoriais = erro
-
     if tratamento_setorial:
         st.info(
             "Layout contábil setorial detectado: "
@@ -2460,10 +2165,9 @@ if empresa_selecionada is not None:
         )
 
         st.caption(
-            "Síntese visual dos indicadores financeiros "
-            "aplicáveis ao layout contábil. "
-            "Os valores são provenientes diretamente dos "
-            "motores validados e não são recalculados "
+            "Síntese visual dos 12 indicadores financeiros. "
+            "Os valores são provenientes diretamente do "
+            "motor de indicadores e não são recalculados "
             "pelo painel."
         )
 
@@ -2497,16 +2201,7 @@ if empresa_selecionada is not None:
             st.metric(
                 "Indicadores disponíveis",
                 (
-                    (
-                        f"{qtd_indicadores_financeiros_disponiveis} / 9"
-                    )
-                    if (
-                        "FINANCEIRA"
-                        in layouts_detectados
-                    )
-                    else (
-                        f"{qtd_indicadores_aplicaveis} / 12"
-                    )
+                    f"{qtd_indicadores_aplicaveis} / 12"
                 ),
             )
 
@@ -2524,264 +2219,151 @@ if empresa_selecionada is not None:
 
 
         # ----------------------------------------------------
-        # INDICADORES SETORIAIS — FINANCEIRO
+        # ESTRUTURA
         # ----------------------------------------------------
 
-        if (
-            "FINANCEIRA"
-            in layouts_detectados
-        ):
-            st.markdown(
-                "## Indicadores setoriais — Financeiro"
-            )
+        st.markdown(
+            "## Estrutura de Capital"
+        )
 
-            if erro_indicadores_fin_setoriais is not None:
-                st.warning(
-                    "A camada setorial financeira "
-                    "não pôde ser carregada."
-                )
+        exibir_cards_dashboard(
+            cards_dashboard,
+            [
+                "IPL",
+                "PCT",
+                "CE",
+                "EFSAT",
+            ],
+            ano_base,
+        )
 
-                with st.expander(
-                    "Detalhes técnicos"
-                ):
-                    st.exception(
-                        erro_indicadores_fin_setoriais
-                    )
+        exibir_grafico_dashboard(
+            graficos_dashboard[
+                "estrutura"
+            ],
+            key="grafico_estrutura_dashboard",
+        )
 
-            elif indicadores_fin_setoriais.empty:
-                st.info(
-                    "Indicadores setoriais financeiros "
-                    "não disponíveis para o período."
-                )
+        st.caption(
+            "IPL, PCT, CE e EFSAT são apresentados "
+            "em percentual. PCT, CE e EFSAT exigem "
+            "interpretação contextual."
+        )
 
-            else:
-                st.markdown(
-                    "### Capitalização e Funding"
-                )
 
-                exibir_cards_financeiros_setoriais(
-                    indicadores_fin_setoriais,
-                    [
-                        "CAP_CONTABIL",
-                        "PF_ATIVO",
-                    ],
-                    ano_base,
-                    ano_recente,
-                )
+        st.divider()
 
-                st.markdown(
-                    "### Crescimento"
-                )
 
-                exibir_cards_financeiros_setoriais(
-                    indicadores_fin_setoriais,
-                    [
-                        "CRESC_ATIVO",
-                        "CRESC_PL",
-                        "CRESC_LL",
-                    ],
-                    ano_base,
-                    ano_recente,
-                )
+        # ----------------------------------------------------
+        # LIQUIDEZ
+        # ----------------------------------------------------
 
-                st.markdown(
-                    "### Intermediação e Rentabilidade"
-                )
+        st.markdown(
+            "## Liquidez"
+        )
 
-                exibir_cards_financeiros_setoriais(
-                    indicadores_fin_setoriais,
-                    [
-                        "RBI_ATIVO_MEDIO",
-                        "PRETRIB_ATIVO_MEDIO",
-                    ],
-                    ano_base,
-                    ano_recente,
-                )
+        exibir_cards_dashboard(
+            cards_dashboard,
+            [
+                "LG",
+                "LC",
+                "LS",
+                "ICJ",
+            ],
+            ano_base,
+        )
 
-                st.caption(
-                    "Capitalização Contábil não representa "
-                    "capital regulatório/Basileia. "
-                    "RBI/Ativo Médio não representa NIM. "
-                    "Crescimentos utilizam apenas períodos "
-                    "com base comparável."
-                )
-
-            st.divider()
-
-            st.markdown(
-                "## Indicadores tradicionais — referência metodológica"
-            )
-
-            st.caption(
-                "ROA e ROE permanecem aplicáveis pelo motor original. "
-                "Os demais indicadores tradicionais incompatíveis "
-                "continuam classificados como N/A."
-            )
-
-        # === B3_UI_FINANCEIRA ===
-        if (
-            "FINANCEIRA"
-            in layouts_detectados
-        ):
-            st.markdown(
-                "## Rentabilidade"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
+        coluna_liquidez, coluna_icj = (
+            st.columns(
                 [
-                    "ROA",
-                    "ROE",
-                ],
-                ano_base,
+                    2,
+                    1,
+                ]
             )
+        )
+
+        with coluna_liquidez:
+
+            exibir_grafico_dashboard(
+                graficos_dashboard[
+                    "liquidez"
+                ],
+                key="grafico_liquidez_dashboard",
+            )
+
+        with coluna_icj:
+
+            exibir_grafico_dashboard(
+                graficos_dashboard[
+                    "icj"
+                ],
+                key="grafico_icj_dashboard",
+            )
+
+        st.caption(
+            "LG, LC e LS são razões. "
+            "O ICJ é apresentado separadamente "
+            "por possuir escala própria em vezes."
+        )
+
+
+        st.divider()
+
+
+        # ----------------------------------------------------
+        # DESEMPENHO
+        # ----------------------------------------------------
+
+        st.markdown(
+            "## Lucratividade e Desempenho"
+        )
+
+        exibir_cards_dashboard(
+            cards_dashboard,
+            [
+                "GA",
+                "RSV",
+                "ROA",
+                "ROE",
+            ],
+            ano_base,
+        )
+
+        coluna_rentabilidade, coluna_ga = (
+            st.columns(
+                [
+                    2,
+                    1,
+                ]
+            )
+        )
+
+        with coluna_rentabilidade:
 
             exibir_grafico_dashboard(
                 graficos_dashboard[
                     "rentabilidade"
                 ],
-                key="grafico_rentabilidade_financeira",
+                key="grafico_rentabilidade_dashboard",
             )
 
-            st.caption(
-                "ROA e ROE permanecem calculados pelo "
-                "motor original já validado. Os demais "
-                "indicadores tradicionais incompatíveis "
-                "ficam disponíveis apenas na auditoria metodológica."
-            )
-
-            st.divider()
-
-        else:
-            st.markdown(
-                "## Estrutura de Capital"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "IPL",
-                    "PCT",
-                    "CE",
-                    "EFSAT",
-                ],
-                ano_base,
-            )
+        with coluna_ga:
 
             exibir_grafico_dashboard(
                 graficos_dashboard[
-                    "estrutura"
+                    "ga"
                 ],
-                key="grafico_estrutura_dashboard",
+                key="grafico_ga_dashboard",
             )
 
-            st.caption(
-                "IPL, PCT, CE e EFSAT são apresentados "
-                "em percentual. PCT, CE e EFSAT exigem "
-                "interpretação contextual."
-            )
+        st.caption(
+            "RSV, ROA e ROE são percentuais. "
+            "O Giro do Ativo é apresentado separadamente "
+            "por utilizar unidade em vezes."
+        )
 
-            st.divider()
 
-            st.markdown(
-                "## Liquidez"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "LG",
-                    "LC",
-                    "LS",
-                    "ICJ",
-                ],
-                ano_base,
-            )
-
-            coluna_liquidez, coluna_icj = (
-                st.columns(
-                    [
-                        2,
-                        1,
-                    ]
-                )
-            )
-
-            with coluna_liquidez:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "liquidez"
-                    ],
-                    key="grafico_liquidez_dashboard",
-                )
-
-            with coluna_icj:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "icj"
-                    ],
-                    key="grafico_icj_dashboard",
-                )
-
-            st.caption(
-                "LG, LC e LS são razões. "
-                "O ICJ é apresentado separadamente "
-                "por possuir escala própria em vezes."
-            )
-
-            st.divider()
-
-            st.markdown(
-                "## Lucratividade e Desempenho"
-            )
-
-            exibir_cards_dashboard(
-                cards_dashboard,
-                [
-                    "GA",
-                    "RSV",
-                    "ROA",
-                    "ROE",
-                ],
-                ano_base,
-            )
-
-            coluna_rentabilidade, coluna_ga = (
-                st.columns(
-                    [
-                        2,
-                        1,
-                    ]
-                )
-            )
-
-            with coluna_rentabilidade:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "rentabilidade"
-                    ],
-                    key="grafico_rentabilidade_dashboard",
-                )
-
-            with coluna_ga:
-
-                exibir_grafico_dashboard(
-                    graficos_dashboard[
-                        "ga"
-                    ],
-                    key="grafico_ga_dashboard",
-                )
-
-            st.caption(
-                "RSV, ROA e ROE são percentuais. "
-                "O Giro do Ativo é apresentado separadamente "
-                "por utilizar unidade em vezes."
-            )
-
-            st.divider()
+        st.divider()
 
 
         # ----------------------------------------------------
@@ -2973,146 +2555,11 @@ if empresa_selecionada is not None:
             "Não se aplica AV ou AH aos indicadores."
         )
 
-        if (
-            "FINANCEIRA"
-            in layouts_detectados
-        ):
-            st.markdown(
-                "## Indicadores setoriais — Financeiro"
-            )
-
-            if erro_indicadores_fin_setoriais is not None:
-                st.warning(
-                    "Não foi possível carregar "
-                    "a camada setorial financeira."
-                )
-
-            elif indicadores_fin_setoriais.empty:
-                st.info(
-                    "Indicadores setoriais financeiros "
-                    "não disponíveis."
-                )
-
-            else:
-                for grupo_fin in [
-                    "Capitalização e Funding",
-                    "Crescimento",
-                    "Intermediação e Rentabilidade",
-                ]:
-                    st.markdown(
-                        f"### {grupo_fin}"
-                    )
-
-                    tabela_fin = (
-                        tabela_indicadores_financeiros_setoriais(
-                            indicadores_fin_setoriais,
-                            grupo_fin,
-                            anos_desc,
-                        )
-                    )
-
-                    st.dataframe(
-                        tabela_fin,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-                st.caption(
-                    "N/D indica dado necessário indisponível. "
-                    "N/A indica taxa não interpretável "
-                    "pela regra metodológica, como mudança "
-                    "de sinal do Lucro Líquido."
-                )
-
-            st.divider()
-
-            st.markdown(
-                "## Indicadores tradicionais — referência metodológica"
-            )
-
         if quadro_inds.empty:
 
             st.warning(
                 "Indicadores não disponíveis."
             )
-
-        elif (
-            "FINANCEIRA"
-            in layouts_detectados
-        ):
-            st.markdown(
-                "### Rentabilidade tradicional aplicável"
-            )
-
-            quadro_roa_roe = (
-                quadro_inds.loc[
-                    quadro_inds[
-                        "INDICADOR"
-                    ].isin(
-                        [
-                            "ROA",
-                            "ROE",
-                        ]
-                    )
-                ]
-                .copy()
-            )
-
-            tabela_roa_roe = (
-                tabela_indicadores_grupo(
-                    quadro_roa_roe,
-                    "Lucratividade/Desempenho",
-                    anos_desc,
-                )
-            )
-
-            st.dataframe(
-                tabela_roa_roe,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            with st.expander(
-                "Indicadores tradicionais não aplicáveis — auditoria metodológica"
-            ):
-                quadro_na = (
-                    quadro_inds.loc[
-                        quadro_inds[
-                            "APLICABILIDADE"
-                        ].eq(
-                            "NAO_APLICAVEL"
-                        )
-                    ]
-                    .copy()
-                )
-
-                for grupo_na in [
-                    "Estrutura de Capital",
-                    "Liquidez",
-                    "Lucratividade/Desempenho",
-                ]:
-                    tabela_na = (
-                        tabela_indicadores_grupo(
-                            quadro_na,
-                            grupo_na,
-                            anos_desc,
-                        )
-                    )
-
-                    if tabela_na.empty:
-                        continue
-
-                    st.markdown(
-                        f"#### {grupo_na}"
-                    )
-
-                    st.dataframe(
-                        tabela_na,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-            st.divider()
 
         else:
 
@@ -3164,15 +2611,7 @@ if empresa_selecionada is not None:
                     st.selectbox(
                         "Indicador",
                         options=(
-                            [
-                                "ROA",
-                                "ROE",
-                            ]
-                            if (
-                                "FINANCEIRA"
-                                in layouts_detectados
-                            )
-                            else ORDEM_INDICADORES
+                            ORDEM_INDICADORES
                         ),
                         format_func=lambda x: (
                             f"{x} — "
