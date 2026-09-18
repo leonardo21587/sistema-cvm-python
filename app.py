@@ -2190,16 +2190,7 @@ if empresa_selecionada is not None:
                 )
             )
 
-            relatorio_exportacao = (
-                carregar_relatorio(
-                    cd_cvm,
-                    nome,
-                    anos_tuple,
-                    False,
-                )
-                if "FINANCEIRA" in layouts_detectados
-                else relatorio
-            )
+            relatorio_exportacao = relatorio
 
             validacao = (
                 carregar_validacao(

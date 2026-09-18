@@ -10,6 +10,9 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from src.indicadores_financeiros import INDICADORES_FINANCEIROS
+from src.layouts_cvm import LAYOUT_FINANCEIRA
+
 
 # ============================================================
 # SISTEMA CVM — EXPORTAÇÃO EXCEL
@@ -51,6 +54,7 @@ INDICADORES_PERCENTUAIS = {
     "RSV",
     "ROA",
     "ROE",
+    *INDICADORES_FINANCEIROS,
 }
 
 
@@ -728,6 +732,146 @@ def _colorir_status_validacao(ws) -> None:
             celula.font = Font(name="Aptos", bold=True, size=10)
 
 
+def _validacao_financeira_exportacao(
+    validacao: pd.DataFrame | None,
+    relatorio: Any,
+) -> pd.DataFrame | None:
+    if validacao is None:
+        return None
+
+    resultado = validacao.copy()
+
+    if {
+        "CATEGORIA",
+        "TESTE",
+    }.issubset(resultado.columns):
+        categoria = resultado["CATEGORIA"].astype(str)
+        teste = resultado["TESTE"].astype(str)
+        contrato_antigo = (
+            categoria.eq("Indicadores")
+            & teste.isin(
+                [
+                    "Quantidade de indicadores",
+                    "Cobertura dos indicadores",
+                ]
+            )
+        )
+
+        resultado = resultado.loc[
+            ~(
+                contrato_antigo
+                | categoria.eq("DuPont")
+            )
+        ].copy()
+
+    base_financeira = (
+        relatorio.get("INDICADORES_SETORIAIS")
+        if isinstance(relatorio, dict)
+        else None
+    )
+
+    if (
+        not isinstance(base_financeira, pd.DataFrame)
+        or base_financeira.empty
+        or not {"ANO", "INDICADOR", "STATUS"}.issubset(
+            base_financeira.columns
+        )
+    ):
+        return resultado
+
+    linhas = []
+    esperados = len(INDICADORES_FINANCEIROS) + 2
+
+    for ano in sorted(
+        base_financeira["ANO"].dropna().astype(int).unique()
+    ):
+        dados_ano = base_financeira.loc[
+            base_financeira["ANO"].eq(ano)
+        ]
+        qtd = int(dados_ano["INDICADOR"].nunique())
+
+        linhas.append(
+            {
+                "CATEGORIA": "Indicadores",
+                "ANO": ano,
+                "TESTE": "Quantidade de indicadores",
+                "STATUS": (
+                    "OK"
+                    if qtd == esperados
+                    else "BLOQUEIO"
+                ),
+                "DETALHE": (
+                    f"{qtd} indicadores financeiros "
+                    "calculados/representados."
+                    if qtd == esperados
+                    else (
+                        f"{qtd} indicadores financeiros; "
+                        f"esperado {esperados}."
+                    )
+                ),
+            }
+        )
+
+        status = dados_ano["STATUS"].astype(str).str.strip()
+
+        nd = (
+            dados_ano.loc[status.eq("N/D"), "INDICADOR"]
+            .astype(str).tolist()
+        )
+        na = (
+            dados_ano.loc[status.eq("N/A"), "INDICADOR"]
+            .astype(str).tolist()
+        )
+
+        detalhes = []
+
+        if nd:
+            detalhes.append(
+                "N/D entre indicadores financeiros: "
+                + ", ".join(nd)
+            )
+
+        if na:
+            detalhes.append(
+                "N/A entre indicadores financeiros: "
+                + ", ".join(na)
+            )
+
+        linhas.append(
+            {
+                "CATEGORIA": "Indicadores",
+                "ANO": ano,
+                "TESTE": "Cobertura dos indicadores",
+                "STATUS": (
+                    "ALERTA"
+                    if nd
+                    else (
+                        "INFO"
+                        if na
+                        else "OK"
+                    )
+                ),
+                "DETALHE": (
+                    "; ".join(detalhes)
+                    if detalhes
+                    else (
+                        f"Todos os {esperados} indicadores financeiros "
+                        "possuem resultado numérico."
+                    )
+                ),
+            }
+        )
+
+    cobertura = pd.DataFrame(linhas).reindex(
+        columns=resultado.columns
+    )
+
+    return pd.concat(
+        [resultado, cobertura],
+        ignore_index=True,
+    )
+
+
 def gerar_excel_sistema(
     *,
     identificacao: dict[str, Any],
@@ -748,6 +892,16 @@ def gerar_excel_sistema(
     - apenas exporta os mesmos objetos já produzidos pelo app;
     - retorna bytes prontos para uso no Streamlit.
     """
+    layout_financeiro = (
+        LAYOUT_FINANCEIRA
+        in str(
+            identificacao.get(
+                "LAYOUT_CVM",
+                "",
+            )
+        )
+    )
+
     wb = Workbook()
 
     # Remove planilha padrão.
@@ -809,11 +963,32 @@ def gerar_excel_sistema(
         "Valores e análises exportados do mesmo quadro utilizado pelo sistema.",
     )
 
-    indicadores_exportacao = (
-        indicadores.copy()
-        if indicadores is not None
-        else None
-    )
+    if layout_financeiro:
+        analise_financeira = (
+            relatorio.get(
+                "ANALISE_INDICADORES"
+            )
+            if isinstance(
+                relatorio,
+                dict,
+            )
+            else None
+        )
+
+        indicadores_exportacao = (
+            analise_financeira.copy()
+            if isinstance(
+                analise_financeira,
+                pd.DataFrame,
+            )
+            else None
+        )
+    else:
+        indicadores_exportacao = (
+            indicadores.copy()
+            if indicadores is not None
+            else None
+        )
 
     if (
         indicadores_exportacao is not None
@@ -830,10 +1005,17 @@ def gerar_excel_sistema(
         )
 
         for coluna in indicadores_exportacao.columns:
-            if isinstance(coluna, int):
+            if (
+                isinstance(coluna, int)
+                or coluna in {
+                    "BASE",
+                    "INTERMEDIARIO",
+                    "RECENTE",
+                }
+            ):
                 # Pandas 3 não permite gravar texto diretamente
-                # em coluna float64. Convertemos somente a coluna
-                # de exibição/exportação para object antes do N/A.
+                # em coluna float64. Convertemos somente as colunas
+                # de valores exportados para object antes do N/A.
                 indicadores_exportacao[
                     coluna
                 ] = indicadores_exportacao[
@@ -850,19 +1032,53 @@ def gerar_excel_sistema(
         ws_ind,
         indicadores_exportacao,
         "Indicadores Financeiros",
-        "Os 12 indicadores seguem os resultados já calculados pelo motor financeiro aprovado.",
+        (
+            "Os 9 indicadores aplicáveis ao layout FINANCEIRA "
+            "seguem os resultados já calculados pelos motores aprovados."
+            if layout_financeiro
+            else (
+                "Os 12 indicadores seguem os resultados já calculados "
+                "pelo motor financeiro aprovado."
+            )
+        ),
     )
+
+    validacao_exportacao = (
+        _validacao_financeira_exportacao(
+            validacao,
+            relatorio,
+        )
+        if layout_financeiro
+        else validacao
+    )
+
+    relatorio_exportacao = relatorio
+
+    if layout_financeiro and isinstance(
+        relatorio,
+        dict,
+    ):
+        relatorio_exportacao = {
+            chave: valor
+            for chave, valor in relatorio.items()
+            if chave != "DUPONT"
+        }
+
+        if "VALIDACAO" in relatorio_exportacao:
+            relatorio_exportacao[
+                "VALIDACAO"
+            ] = validacao_exportacao
 
     ws_rel = wb.create_sheet("Relatório")
     _escrever_relatorio(
         ws_rel,
-        relatorio,
+        relatorio_exportacao,
     )
 
     ws_val = wb.create_sheet("Validação")
     _escrever_dataframe(
         ws_val,
-        validacao,
+        validacao_exportacao,
         "Validação / Auditoria",
         "BLOQUEIO suspende interpretação conclusiva; ALERTA permite análise com ressalva.",
     )
