@@ -365,6 +365,7 @@ def _escrever_dataframe(
     _ajustar_larguras(ws)
 
 
+
 def _escrever_identificacao(
     ws,
     identificacao: dict[str, Any],
@@ -378,27 +379,83 @@ def _escrever_identificacao(
     )
 
     campos = [
-        ("Empresa", identificacao.get("DENOM_CIA") or identificacao.get("EMPRESA")),
-        ("CD_CVM", identificacao.get("CD_CVM")),
-        ("CNPJ", identificacao.get("CNPJ_CIA") or identificacao.get("CNPJ")),
+        (
+            "Empresa",
+            identificacao.get("DENOM_CIA")
+            or identificacao.get("EMPRESA"),
+        ),
+        (
+            "CD_CVM",
+            identificacao.get("CD_CVM"),
+        ),
+        (
+            "CNPJ",
+            identificacao.get("CNPJ_CIA")
+            or identificacao.get("CNPJ"),
+        ),
     ]
 
+    layout = identificacao.get(
+        "LAYOUT_CVM"
+    )
+
+    if layout:
+        campos.append(
+            (
+                "Layout CVM",
+                layout,
+            )
+        )
+
+    if identificacao.get(
+        "TRATAMENTO_SETORIAL"
+    ):
+        campos.append(
+            (
+                "Tratamento setorial",
+                (
+                    "Sim — indicadores não comparáveis ao "
+                    "modelo tradicional são exibidos como N/A."
+                ),
+            )
+        )
+
     if anos:
-        anos_limpos = sorted({int(ano) for ano in anos})
+        anos_limpos = sorted(
+            {
+                int(ano)
+                for ano in anos
+            }
+        )
+
         campos.extend(
             [
-                ("Período analisado", f"{anos_limpos[0]}–{anos_limpos[-1]}"),
-                ("Ano-base da AH", anos_limpos[0]),
-                ("Exercício mais recente", anos_limpos[-1]),
+                (
+                    "Período analisado",
+                    f"{anos_limpos[0]}–{anos_limpos[-1]}",
+                ),
+                (
+                    "Ano-base da AH",
+                    anos_limpos[0],
+                ),
+                (
+                    "Exercício mais recente",
+                    anos_limpos[-1],
+                ),
             ]
         )
 
     campos.extend(
         [
-            ("Status de validação", status_validacao or "N/D"),
+            (
+                "Status de validação",
+                status_validacao or "N/D",
+            ),
             (
                 "Gerado em",
-                datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                datetime.now().strftime(
+                    "%d/%m/%Y %H:%M:%S"
+                ),
             ),
             (
                 "Observação metodológica",
@@ -412,21 +469,50 @@ def _escrever_identificacao(
         ]
     )
 
-    borda = Side(style="thin", color=COR_BORDA)
+    borda = Side(
+        style="thin",
+        color=COR_BORDA,
+    )
 
-    for i, (campo, valor) in enumerate(campos, start=linha):
-        ws.cell(i, 1, campo)
-        ws.cell(i, 2, _valor_excel(valor))
+    for i, (campo, valor) in enumerate(
+        campos,
+        start=linha,
+    ):
+        ws.cell(
+            i,
+            1,
+            campo,
+        )
+        ws.cell(
+            i,
+            2,
+            _valor_excel(valor),
+        )
 
-        ws.cell(i, 1).font = Font(name="Aptos", bold=True, size=10)
-        ws.cell(i, 1).fill = PatternFill("solid", fgColor=COR_SECUNDARIA)
+        ws.cell(i, 1).font = Font(
+            name="Aptos",
+            bold=True,
+            size=10,
+        )
+
+        ws.cell(i, 1).fill = PatternFill(
+            "solid",
+            fgColor=COR_SECUNDARIA,
+        )
 
         for coluna in (1, 2):
-            ws.cell(i, coluna).alignment = Alignment(
+            ws.cell(
+                i,
+                coluna,
+            ).alignment = Alignment(
                 vertical="top",
                 wrap_text=True,
             )
-            ws.cell(i, coluna).border = Border(
+
+            ws.cell(
+                i,
+                coluna,
+            ).border = Border(
                 left=borda,
                 right=borda,
                 top=borda,
@@ -692,18 +778,77 @@ def gerar_excel_sistema(
         "Valores e análises exportados do mesmo quadro utilizado pelo sistema.",
     )
 
+    dre_exportacao = (
+        dre.copy()
+        if dre is not None
+        else None
+    )
+
+    if (
+        dre_exportacao is not None
+        and bool(
+            getattr(
+                dre,
+                "attrs",
+                {},
+            ).get(
+                "AV_NAO_APLICAVEL",
+                False,
+            )
+        )
+    ):
+        for coluna in dre_exportacao.columns:
+            if str(coluna).startswith("AV_"):
+                dre_exportacao[coluna] = "N/A"
+
     ws_dre = wb.create_sheet("DRE")
     _escrever_dataframe(
         ws_dre,
-        dre,
+        dre_exportacao,
         "Demonstração do Resultado do Exercício",
         "Valores e análises exportados do mesmo quadro utilizado pelo sistema.",
     )
 
+    indicadores_exportacao = (
+        indicadores.copy()
+        if indicadores is not None
+        else None
+    )
+
+    if (
+        indicadores_exportacao is not None
+        and not indicadores_exportacao.empty
+        and "APLICABILIDADE"
+        in indicadores_exportacao.columns
+    ):
+        mascara_na = (
+            indicadores_exportacao[
+                "APLICABILIDADE"
+            ]
+            .astype(str)
+            .eq("NAO_APLICAVEL")
+        )
+
+        for coluna in indicadores_exportacao.columns:
+            if isinstance(coluna, int):
+                # Pandas 3 não permite gravar texto diretamente
+                # em coluna float64. Convertemos somente a coluna
+                # de exibição/exportação para object antes do N/A.
+                indicadores_exportacao[
+                    coluna
+                ] = indicadores_exportacao[
+                    coluna
+                ].astype("object")
+
+                indicadores_exportacao.loc[
+                    mascara_na,
+                    coluna,
+                ] = "N/A"
+
     ws_ind = wb.create_sheet("Indicadores")
     _escrever_dataframe(
         ws_ind,
-        indicadores,
+        indicadores_exportacao,
         "Indicadores Financeiros",
         "Os 12 indicadores seguem os resultados já calculados pelo motor financeiro aprovado.",
     )

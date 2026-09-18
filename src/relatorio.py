@@ -704,40 +704,41 @@ def _interpretacao_individual(
 # ANÁLISE DOS 12 INDICADORES
 # ============================================================
 
+
 def analisar_indicadores(
     quadro: pd.DataFrame,
     anos: list[int],
 ) -> pd.DataFrame:
-
     anos = sorted(
         int(ano)
         for ano in anos
     )
 
+    colunas = [
+        "GRUPO",
+        "INDICADOR",
+        "NOME",
+        "BASE",
+        "INTERMEDIARIO",
+        "RECENTE",
+        "MOV_1",
+        "MOV_2",
+        "DELTA",
+        "TRAJETORIA",
+        "POSICAO_FINAL",
+        "INTERPRETACAO",
+        "LAYOUT",
+        "APLICABILIDADE",
+        "MOTIVO_NA",
+    ]
 
     if len(anos) < 2:
         return pd.DataFrame(
-            columns=[
-                "GRUPO",
-                "INDICADOR",
-                "NOME",
-                "BASE",
-                "INTERMEDIARIO",
-                "RECENTE",
-                "MOV_1",
-                "MOV_2",
-                "DELTA",
-                "TRAJETORIA",
-                "POSICAO_FINAL",
-                "INTERPRETACAO",
-            ]
+            columns=colunas
         )
 
-
     ano_base = anos[0]
-
     ano_recente = anos[-1]
-
 
     ano_intermediario = (
         anos[1]
@@ -745,22 +746,16 @@ def analisar_indicadores(
         else None
     )
 
-
     registros = []
 
-
     for grupo, codigos in GRUPOS.items():
-
         for codigo in codigos:
-
             linha = _linha_indicador(
                 quadro,
                 codigo,
             )
 
-
             if linha is None:
-
                 registros.append(
                     {
                         "GRUPO": grupo,
@@ -777,18 +772,72 @@ def analisar_indicadores(
                         "INTERPRETACAO": (
                             "Indicador não disponível."
                         ),
+                        "LAYOUT": None,
+                        "APLICABILIDADE": "APLICAVEL",
+                        "MOTIVO_NA": None,
                     }
                 )
-
                 continue
 
+            layout = linha.get(
+                "LAYOUT",
+                None,
+            )
+
+            aplicabilidade = str(
+                linha.get(
+                    "APLICABILIDADE",
+                    "APLICAVEL",
+                )
+            ).strip().upper()
+
+            motivo_na = linha.get(
+                "MOTIVO_NA",
+                None,
+            )
+
+            if (
+                aplicabilidade
+                == "NAO_APLICAVEL"
+            ):
+                registros.append(
+                    {
+                        "GRUPO": grupo,
+                        "INDICADOR": codigo,
+                        "NOME": NOMES[codigo],
+                        "BASE": None,
+                        "INTERMEDIARIO": None,
+                        "RECENTE": None,
+                        "MOV_1": "N/A",
+                        "MOV_2": "N/A",
+                        "DELTA": "N/A",
+                        "TRAJETORIA": "N/A",
+                        "POSICAO_FINAL": "N/A",
+                        "INTERPRETACAO": (
+                            str(motivo_na)
+                            if (
+                                motivo_na is not None
+                                and not pd.isna(
+                                    motivo_na
+                                )
+                            )
+                            else (
+                                "Indicador não aplicável "
+                                "ao layout setorial."
+                            )
+                        ),
+                        "LAYOUT": layout,
+                        "APLICABILIDADE": "NAO_APLICAVEL",
+                        "MOTIVO_NA": motivo_na,
+                    }
+                )
+                continue
 
             base = (
                 linha[ano_base]
                 if ano_base in linha.index
                 else None
             )
-
 
             intermediario = (
                 linha[ano_intermediario]
@@ -800,14 +849,12 @@ def analisar_indicadores(
                 else None
             )
 
-
             recente = (
                 linha[ano_recente]
                 if ano_recente
                 in linha.index
                 else None
             )
-
 
             (
                 trajetoria,
@@ -820,24 +867,17 @@ def analisar_indicadores(
                 recente,
             )
 
-
-            posicao = (
-                _posicao_final(
-                    codigo,
-                    base,
-                    recente,
-                )
+            posicao = _posicao_final(
+                codigo,
+                base,
+                recente,
             )
 
-
-            delta = (
-                _delta_texto(
-                    codigo,
-                    base,
-                    recente,
-                )
+            delta = _delta_texto(
+                codigo,
+                base,
+                recente,
             )
-
 
             interpretacao = (
                 _interpretacao_individual(
@@ -849,15 +889,31 @@ def analisar_indicadores(
                 )
             )
 
+            if (
+                str(layout)
+                != "PADRAO"
+                and codigo == "ROA"
+                and _numero(
+                    recente
+                )
+                is not None
+            ):
+                interpretacao = (
+                    f"O ROA apresentou {trajetoria}. "
+                    f"No exercício recente, o resultado líquido "
+                    f"correspondeu a "
+                    f"{_formatar('ROA', recente)} "
+                    f"do ativo médio. "
+                    f"A decomposição DuPont tradicional "
+                    f"não é aplicada a este layout setorial."
+                )
 
             registros.append(
                 {
                     "GRUPO": grupo,
                     "INDICADOR": codigo,
                     "NOME": NOMES[codigo],
-                    "BASE": _numero(
-                        base
-                    ),
+                    "BASE": _numero(base),
                     "INTERMEDIARIO": _numero(
                         intermediario
                     ),
@@ -870,12 +926,15 @@ def analisar_indicadores(
                     "TRAJETORIA": trajetoria,
                     "POSICAO_FINAL": posicao,
                     "INTERPRETACAO": interpretacao,
+                    "LAYOUT": layout,
+                    "APLICABILIDADE": "APLICAVEL",
+                    "MOTIVO_NA": None,
                 }
             )
 
-
     return pd.DataFrame(
-        registros
+        registros,
+        columns=colunas,
     )
 
 
@@ -911,30 +970,58 @@ def _registro(
 # SÍNTESE — ESTRUTURA DE CAPITAL
 # ============================================================
 
+
 def _resumo_estrutura(
     analise: pd.DataFrame,
 ) -> str:
+    parte = analise.loc[
+        analise[
+            "INDICADOR"
+        ].isin(
+            [
+                "IPL",
+                "PCT",
+                "CE",
+                "EFSAT",
+            ]
+        )
+    ]
+
+    if (
+        not parte.empty
+        and "APLICABILIDADE"
+        in parte.columns
+        and parte[
+            "APLICABILIDADE"
+        ].eq(
+            "NAO_APLICAVEL"
+        ).all()
+    ):
+        return (
+            "Os indicadores tradicionais de estrutura de "
+            "capital deste modelo não são aplicados ao "
+            "layout setorial da companhia. A estrutura "
+            "contábil utiliza rubricas próprias, portanto "
+            "a ausência desses índices representa N/A, "
+            "e não falta de dados."
+        )
 
     ipl = _registro(
         analise,
         "IPL",
     )
-
     pct = _registro(
         analise,
         "PCT",
     )
-
     ce = _registro(
         analise,
         "CE",
     )
-
     efsat = _registro(
         analise,
         "EFSAT",
     )
-
 
     if any(
         item is None
@@ -945,12 +1032,10 @@ def _resumo_estrutura(
             efsat,
         ]
     ):
-
         return (
             "A estrutura de capital não pôde ser "
             "sintetizada integralmente."
         )
-
 
     return (
         f"O IPL apresentou {ipl['TRAJETORIA']} e encerrou "
@@ -970,30 +1055,57 @@ def _resumo_estrutura(
 # SÍNTESE — LIQUIDEZ
 # ============================================================
 
+
 def _resumo_liquidez(
     analise: pd.DataFrame,
 ) -> str:
+    parte = analise.loc[
+        analise[
+            "INDICADOR"
+        ].isin(
+            [
+                "LG",
+                "LC",
+                "LS",
+                "ICJ",
+            ]
+        )
+    ]
+
+    if (
+        not parte.empty
+        and "APLICABILIDADE"
+        in parte.columns
+        and parte[
+            "APLICABILIDADE"
+        ].eq(
+            "NAO_APLICAVEL"
+        ).all()
+    ):
+        return (
+            "Os indicadores tradicionais de liquidez e "
+            "cobertura de juros deste modelo não são "
+            "aplicados ao layout setorial da companhia. "
+            "A classificação é N/A por metodologia, "
+            "não N/D por ausência de informação."
+        )
 
     lg = _registro(
         analise,
         "LG",
     )
-
     lc = _registro(
         analise,
         "LC",
     )
-
     ls = _registro(
         analise,
         "LS",
     )
-
     icj = _registro(
         analise,
         "ICJ",
     )
-
 
     if any(
         item is None
@@ -1004,54 +1116,37 @@ def _resumo_liquidez(
             icj,
         ]
     ):
-
         return (
             "A liquidez não pôde ser sintetizada "
             "integralmente."
         )
 
-
     recente_lc = _numero(
         lc["RECENTE"]
     )
-
     recente_ls = _numero(
         ls["RECENTE"]
     )
 
-
     cobertura = []
 
-
     if recente_lc is not None:
-
-        if recente_lc >= 1:
-
-            cobertura.append(
-                "a Liquidez Corrente ficou acima da unidade"
-            )
-
-        else:
-
-            cobertura.append(
+        cobertura.append(
+            "a Liquidez Corrente ficou acima da unidade"
+            if recente_lc >= 1
+            else (
                 "a Liquidez Corrente ficou abaixo da unidade"
             )
-
+        )
 
     if recente_ls is not None:
-
-        if recente_ls >= 1:
-
-            cobertura.append(
-                "a Liquidez Seca também superou a unidade"
-            )
-
-        else:
-
-            cobertura.append(
+        cobertura.append(
+            "a Liquidez Seca também superou a unidade"
+            if recente_ls >= 1
+            else (
                 "a Liquidez Seca ficou abaixo da unidade"
             )
-
+        )
 
     cobertura_texto = (
         "; ".join(
@@ -1063,7 +1158,6 @@ def _resumo_liquidez(
             "leitura individual"
         )
     )
-
 
     return (
         f"A Liquidez Geral apresentou "
@@ -1235,31 +1329,89 @@ def _canal_dupont(
 # SÍNTESE — DESEMPENHO
 # ============================================================
 
+
 def _resumo_desempenho(
     analise: pd.DataFrame,
     dupont: pd.DataFrame,
 ) -> str:
-
     ga = _registro(
         analise,
         "GA",
     )
-
     rsv = _registro(
         analise,
         "RSV",
     )
-
     roa = _registro(
         analise,
         "ROA",
     )
-
     roe = _registro(
         analise,
         "ROE",
     )
 
+    ga_na = (
+        ga is not None
+        and str(
+            ga.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        )
+        == "NAO_APLICAVEL"
+    )
+
+    rsv_na = (
+        rsv is not None
+        and str(
+            rsv.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        )
+        == "NAO_APLICAVEL"
+    )
+
+    roa_aplicavel = (
+        roa is not None
+        and str(
+            roa.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        )
+        == "APLICAVEL"
+    )
+
+    roe_aplicavel = (
+        roe is not None
+        and str(
+            roe.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        )
+        == "APLICAVEL"
+    )
+
+    if (
+        ga_na
+        and rsv_na
+        and roa_aplicavel
+        and roe_aplicavel
+    ):
+        return (
+            f"No layout setorial, Giro do Ativo e Retorno "
+            f"sobre Vendas não são calculados pela metodologia "
+            f"tradicional. O ROA apresentou "
+            f"{roa['TRAJETORIA']} e encerrou o período em "
+            f"{_formatar('ROA', roa['RECENTE'])}; o ROE "
+            f"apresentou {roe['TRAJETORIA']} e encerrou em "
+            f"{_formatar('ROE', roe['RECENTE'])}. "
+            f"A decomposição DuPont tradicional não se aplica "
+            f"a esse layout."
+        )
 
     if any(
         item is None
@@ -1270,15 +1422,12 @@ def _resumo_desempenho(
             roe,
         ]
     ):
-
         return (
             "O desempenho não pôde ser sintetizado "
             "integralmente."
         )
 
-
     if dupont.empty:
-
         status_dupont = "N/D"
 
     elif (
@@ -1288,13 +1437,10 @@ def _resumo_desempenho(
         .eq("OK")
         .all()
     ):
-
         status_dupont = "OK"
 
     else:
-
         status_dupont = "RESSALVA"
-
 
     return (
         f"O Giro do Ativo apresentou "
@@ -1422,16 +1568,14 @@ def principais_mudancas(
 # PONTOS DE ATENÇÃO
 # ============================================================
 
+
 def pontos_de_atencao(
     validacao: pd.DataFrame,
     analise: pd.DataFrame,
 ) -> list[str]:
-
     pontos = []
 
-
     if not validacao.empty:
-
         problemas = validacao.loc[
             validacao[
                 "STATUS"
@@ -1443,26 +1587,19 @@ def pontos_de_atencao(
             )
         ]
 
-
         for _, linha in (
             problemas.iterrows()
         ):
-
             ano = linha.get(
                 "ANO"
             )
 
-
             if pd.isna(ano):
-
                 ano_txt = ""
-
             else:
-
                 ano_txt = (
                     f" ({int(ano)})"
                 )
-
 
             pontos.append(
                 f"{linha['STATUS']}: "
@@ -1470,10 +1607,21 @@ def pontos_de_atencao(
                 f"{linha['DETALHE']}"
             )
 
-
     for _, linha in (
         analise.iterrows()
     ):
+        aplicabilidade = str(
+            linha.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        )
+
+        if (
+            aplicabilidade
+            == "NAO_APLICAVEL"
+        ):
+            continue
 
         if (
             _numero(
@@ -1481,21 +1629,17 @@ def pontos_de_atencao(
             )
             is None
         ):
-
             pontos.append(
                 f"{linha['INDICADOR']}: "
                 f"resultado recente N/D; "
                 f"não produzir interpretação conclusiva."
             )
 
-
     if not pontos:
-
         pontos.append(
             "Nenhum alerta ou bloqueio identificado "
             "nas verificações utilizadas pelo relatório."
         )
-
 
     return pontos
 
@@ -1504,70 +1648,180 @@ def pontos_de_atencao(
 # RESUMO EXECUTIVO
 # ============================================================
 
+
 def gerar_resumo_executivo(
     nome_empresa: str,
     anos: list[int],
     analise: pd.DataFrame,
     status_validacao: str,
 ) -> str:
-
     anos = sorted(
         anos
     )
 
+    especiais = (
+        "APLICABILIDADE"
+        in analise.columns
+        and analise[
+            "APLICABILIDADE"
+        ].eq(
+            "NAO_APLICAVEL"
+        ).any()
+    )
+
+    if especiais:
+        aplicaveis = analise.loc[
+            analise[
+                "APLICABILIDADE"
+            ].eq(
+                "APLICAVEL"
+            )
+        ]
+
+        codigos_aplicaveis = (
+            aplicaveis[
+                "INDICADOR"
+            ]
+            .astype(str)
+            .tolist()
+        )
+
+        frases = [
+            (
+                f"A análise de {nome_empresa} cobre o período "
+                f"de {anos[0]} a {anos[-1]}. O sistema "
+                f"identificou um layout contábil setorial; "
+                f"por isso, os indicadores tradicionais cuja "
+                f"estrutura não é comparável foram classificados "
+                f"como N/A, em vez de N/D."
+            )
+        ]
+
+        if codigos_aplicaveis:
+            frases.append(
+                "Nesta metodologia, os indicadores "
+                "automaticamente aplicáveis são: "
+                + ", ".join(
+                    codigos_aplicaveis
+                )
+                + "."
+            )
+
+        roa = _registro(
+            analise,
+            "ROA",
+        )
+        roe = _registro(
+            analise,
+            "ROE",
+        )
+
+        if (
+            roa is not None
+            and str(
+                roa.get(
+                    "APLICABILIDADE",
+                    ""
+                )
+            )
+            == "APLICAVEL"
+            and _numero(
+                roa["RECENTE"]
+            )
+            is not None
+        ):
+            frases.append(
+                f"O ROA apresentou {roa['TRAJETORIA']} e "
+                f"encerrou o período em "
+                f"{_formatar('ROA', roa['RECENTE'])}."
+            )
+
+        if (
+            roe is not None
+            and str(
+                roe.get(
+                    "APLICABILIDADE",
+                    ""
+                )
+            )
+            == "APLICAVEL"
+            and _numero(
+                roe["RECENTE"]
+            )
+            is not None
+        ):
+            frases.append(
+                f"O ROE apresentou {roe['TRAJETORIA']} e "
+                f"encerrou o período em "
+                f"{_formatar('ROE', roe['RECENTE'])}."
+            )
+
+        if status_validacao == "INFO":
+            frases.append(
+                "A validação não identificou alertas ou "
+                "bloqueios; os registros informativos "
+                "decorrem principalmente da aplicação do "
+                "tratamento setorial."
+            )
+
+        elif status_validacao == "ALERTA":
+            frases.append(
+                "A análise permanece disponível, mas existem "
+                "ressalvas de validação que devem acompanhar "
+                "a interpretação."
+            )
+
+        elif status_validacao == "BLOQUEIO":
+            frases.append(
+                "Existe bloqueio de validação; interpretações "
+                "financeiras conclusivas devem permanecer "
+                "suspensas até a correção da integridade."
+            )
+
+        return " ".join(
+            frases
+        )
 
     pct = _registro(
         analise,
         "PCT",
     )
-
     ce = _registro(
         analise,
         "CE",
     )
-
     efsat = _registro(
         analise,
         "EFSAT",
     )
-
-
     lg = _registro(
         analise,
         "LG",
     )
-
     lc = _registro(
         analise,
         "LC",
     )
-
     ls = _registro(
         analise,
         "LS",
     )
-
-
     ga = _registro(
         analise,
         "GA",
     )
-
     rsv = _registro(
         analise,
         "RSV",
     )
-
     roa = _registro(
         analise,
         "ROA",
     )
-
     roe = _registro(
         analise,
         "ROE",
     )
-
 
     frases = [
         (
@@ -1578,7 +1832,6 @@ def gerar_resumo_executivo(
         )
     ]
 
-
     if all(
         item is not None
         for item in [
@@ -1587,7 +1840,6 @@ def gerar_resumo_executivo(
             efsat,
         ]
     ):
-
         frases.append(
             f"Na estrutura de capital, a PCT apresentou "
             f"{pct['TRAJETORIA']}, a Composição do "
@@ -1599,7 +1851,6 @@ def gerar_resumo_executivo(
             f"interpretados de maneira contextual."
         )
 
-
     if all(
         item is not None
         for item in [
@@ -1608,7 +1859,6 @@ def gerar_resumo_executivo(
             ls,
         ]
     ):
-
         frases.append(
             f"Na liquidez, LG apresentou "
             f"{lg['TRAJETORIA']}, LC "
@@ -1620,7 +1870,6 @@ def gerar_resumo_executivo(
             f"respectivamente."
         )
 
-
     if all(
         item is not None
         for item in [
@@ -1630,7 +1879,6 @@ def gerar_resumo_executivo(
             roe,
         ]
     ):
-
         frases.append(
             f"Em desempenho, o Giro do Ativo apresentou "
             f"{ga['TRAJETORIA']}, o Retorno sobre Vendas "
@@ -1639,41 +1887,32 @@ def gerar_resumo_executivo(
             f"{roe['TRAJETORIA']}."
         )
 
-
     if status_validacao == "OK":
-
         frases.append(
             "As verificações utilizadas pelo relatório "
             "não identificaram ressalvas ou bloqueios."
         )
 
-
     elif status_validacao == "INFO":
-
         frases.append(
             "A validação não identificou alertas ou "
             "bloqueios, embora existam registros "
             "informativos de auditoria."
         )
 
-
     elif status_validacao == "ALERTA":
-
         frases.append(
             "A análise permanece disponível, mas existem "
             "ressalvas de validação que devem acompanhar "
             "a interpretação."
         )
 
-
     else:
-
         frases.append(
             "Existe bloqueio de validação; interpretações "
             "financeiras conclusivas devem permanecer "
             "suspensas até a correção da integridade."
         )
-
 
     return " ".join(
         frases
@@ -1684,13 +1923,12 @@ def gerar_resumo_executivo(
 # CONCLUSÃO
 # ============================================================
 
+
 def gerar_conclusao(
     analise: pd.DataFrame,
     status_validacao: str,
 ) -> str:
-
     if status_validacao == "BLOQUEIO":
-
         return (
             "A conclusão financeira está suspensa porque "
             "a validação identificou pelo menos um bloqueio "
@@ -1699,38 +1937,106 @@ def gerar_conclusao(
             "financeira conclusiva."
         )
 
+    especiais = (
+        "APLICABILIDADE"
+        in analise.columns
+        and analise[
+            "APLICABILIDADE"
+        ].eq(
+            "NAO_APLICAVEL"
+        ).any()
+    )
+
+    if especiais:
+        roa = _registro(
+            analise,
+            "ROA",
+        )
+        roe = _registro(
+            analise,
+            "ROE",
+        )
+
+        frases = [
+            (
+                "A companhia utiliza layout contábil setorial. "
+                "Por esse motivo, a conclusão não combina "
+                "mecanicamente indicadores tradicionais de "
+                "estrutura de capital, liquidez, giro e margem "
+                "que foram classificados como N/A."
+            )
+        ]
+
+        if (
+            roa is not None
+            and _numero(
+                roa["RECENTE"]
+            )
+            is not None
+        ):
+            frases.append(
+                f"O ROA apresentou {roa['TRAJETORIA']} e "
+                f"encerrou o período em "
+                f"{_formatar('ROA', roa['RECENTE'])}, "
+                f"ante {_formatar('ROA', roa['BASE'])} "
+                f"no exercício-base."
+            )
+
+        if (
+            roe is not None
+            and _numero(
+                roe["RECENTE"]
+            )
+            is not None
+        ):
+            frases.append(
+                f"O ROE apresentou {roe['TRAJETORIA']} e "
+                f"encerrou o período em "
+                f"{_formatar('ROE', roe['RECENTE'])}, "
+                f"ante {_formatar('ROE', roe['BASE'])} "
+                f"no exercício-base."
+            )
+
+        frases.append(
+            "Esses resultados devem ser interpretados "
+            "dentro da estrutura econômica e contábil "
+            "própria do setor."
+        )
+
+        if status_validacao == "ALERTA":
+            frases.append(
+                "As ressalvas registradas na validação "
+                "devem acompanhar essa conclusão."
+            )
+
+        return " ".join(
+            frases
+        )
 
     pct = _registro(
         analise,
         "PCT",
     )
-
     lc = _registro(
         analise,
         "LC",
     )
-
     ga = _registro(
         analise,
         "GA",
     )
-
     rsv = _registro(
         analise,
         "RSV",
     )
-
     roa = _registro(
         analise,
         "ROA",
     )
 
-
     frases = []
 
-
     if pct is not None:
-
         frases.append(
             f"A PCT apresentou {pct['TRAJETORIA']} e "
             f"encerrou o período em "
@@ -1739,9 +2045,7 @@ def gerar_conclusao(
             f"no exercício-base."
         )
 
-
     if lc is not None:
-
         frases.append(
             f"A Liquidez Corrente apresentou "
             f"{lc['TRAJETORIA']} e terminou em "
@@ -1749,7 +2053,6 @@ def gerar_conclusao(
             f"comparada a {_formatar('LC', lc['BASE'])} "
             f"no exercício-base."
         )
-
 
     if all(
         item is not None
@@ -1759,7 +2062,6 @@ def gerar_conclusao(
             roa,
         ]
     ):
-
         frases.append(
             _canal_dupont(
                 ga,
@@ -1775,21 +2077,17 @@ def gerar_conclusao(
             f"observada entre giro e margem."
         )
 
-
     frases.append(
         "No conjunto, a leitura deve combinar estrutura "
         "de capital, liquidez e desempenho, evitando "
         "conclusões baseadas em um único indicador."
     )
 
-
     if status_validacao == "ALERTA":
-
         frases.append(
             "As ressalvas registradas na validação "
             "devem acompanhar essa conclusão."
         )
-
 
     return " ".join(
         frases

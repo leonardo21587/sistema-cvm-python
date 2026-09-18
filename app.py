@@ -14,6 +14,7 @@ from src.demonstracoes import (
 
 from src.padronizacao import (
     montar_demonstracao_padronizada,
+    montar_demonstracao_apresentacao,
 )
 
 from src.indicadores import (
@@ -598,13 +599,14 @@ def carregar_resumo_empresa(
 
 
 @st.cache_data(show_spinner=False)
+
+@st.cache_data(show_spinner=False)
 def carregar_padronizada(
     cd_cvm,
     demonstracao,
     anos_tuple,
 ):
-
-    return montar_demonstracao_padronizada(
+    return montar_demonstracao_apresentacao(
         cd_cvm=cd_cvm,
         demonstracao=demonstracao,
         anos=list(
@@ -613,7 +615,6 @@ def carregar_padronizada(
     )
 
 
-@st.cache_data(show_spinner=False)
 def carregar_raw(
     cd_cvm,
     demonstracao,
@@ -743,6 +744,13 @@ def renderizar_tabela_padronizada(
         )
 
         return
+
+    av_nao_aplicavel = bool(
+        df.attrs.get(
+            "AV_NAO_APLICAVEL",
+            False,
+        )
+    )
 
     anos = sorted(
         [
@@ -1018,10 +1026,14 @@ def renderizar_tabela_padronizada(
                     ]
                 )
 
-                av = formatar_av(
-                    registro[
-                        f"AV_{ano}"
-                    ]
+                av = (
+                    "N/A"
+                    if av_nao_aplicavel
+                    else formatar_av(
+                        registro[
+                            f"AV_{ano}"
+                        ]
+                    )
                 )
 
                 ah = formatar_ah(
@@ -1068,11 +1080,14 @@ def renderizar_tabela_padronizada(
         """
     )
 
-    altura = max(
-        430,
-        145
-        + len(df)
-        * 35,
+    altura = min(
+        900,
+        max(
+            430,
+            145
+            + len(df)
+            * 35,
+        ),
     )
 
     components.html(
@@ -1126,73 +1141,75 @@ def preparar_raw_exibicao(
 # INDICADORES
 # ============================================================
 
+
 def tabela_indicadores_grupo(
     quadro,
     grupo,
     anos_desc,
 ):
-
     parte = quadro.loc[
-        quadro[
-            "GRUPO"
-        ] == grupo
+        quadro["GRUPO"] == grupo
     ].copy()
 
     registros = []
 
-    for _, linha in (
-        parte.iterrows()
-    ):
-
+    for _, linha in parte.iterrows():
         codigo = str(
-            linha[
-                "INDICADOR"
-            ]
+            linha["INDICADOR"]
+        )
+
+        aplicabilidade = str(
+            linha.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        ).strip().upper()
+
+        nao_aplicavel = (
+            aplicabilidade == "NAO_APLICAVEL"
+        )
+
+        motivo_na = linha.get(
+            "MOTIVO_NA",
+            None,
         )
 
         registro = {
             "Sigla": codigo,
-            "Indicador": (
-                NOMES_INDICADORES[
-                    codigo
-                ]
-            ),
-            "Unidade": (
-                linha[
-                    "UNIDADE"
-                ]
-            ),
+            "Indicador": NOMES_INDICADORES[codigo],
+            "Unidade": linha["UNIDADE"],
         }
 
         for ano in anos_desc:
-
-            valor = (
-                linha[
-                    ano
-                ]
-                if ano
-                in linha.index
-                else pd.NA
-            )
-
-            registro[
-                str(
-                    ano
+            if nao_aplicavel:
+                valor_fmt = "N/A"
+            else:
+                valor = (
+                    linha[ano]
+                    if ano in linha.index
+                    else pd.NA
                 )
-            ] = (
-                formatar_indicador(
+
+                valor_fmt = formatar_indicador(
                     codigo,
                     valor,
                 )
-            )
 
-        registro[
-            "Leitura objetiva"
-        ] = (
-            LEITURAS_INDICADORES[
-                codigo
-            ]
-        )
+            registro[str(ano)] = valor_fmt
+
+        if nao_aplicavel:
+            registro["Leitura objetiva"] = (
+                str(motivo_na)
+                if (
+                    motivo_na is not None
+                    and not pd.isna(motivo_na)
+                )
+                else "Não aplicável ao layout setorial."
+            )
+        else:
+            registro["Leitura objetiva"] = (
+                LEITURAS_INDICADORES[codigo]
+            )
 
         registros.append(
             registro
@@ -1207,28 +1224,20 @@ def tabela_indicadores_grupo(
 # RELATÓRIO — TABELA
 # ============================================================
 
+
 def montar_tabela_relatorio(
     analise,
     anos_analise,
 ):
-
     if analise.empty:
-
-        return (
-            pd.DataFrame()
-        )
+        return pd.DataFrame()
 
     anos = sorted(
         anos_analise
     )
 
-    ano_base = (
-        anos[0]
-    )
-
-    ano_recente = (
-        anos[-1]
-    )
+    ano_base = anos[0]
+    ano_recente = anos[-1]
 
     ano_intermediario = (
         anos[1]
@@ -1238,79 +1247,64 @@ def montar_tabela_relatorio(
 
     registros = []
 
-    for _, linha in (
-        analise.iterrows()
-    ):
-
+    for _, linha in analise.iterrows():
         codigo = str(
-            linha[
-                "INDICADOR"
-            ]
+            linha["INDICADOR"]
+        )
+
+        aplicabilidade = str(
+            linha.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        ).strip().upper()
+
+        nao_aplicavel = (
+            aplicabilidade == "NAO_APLICAVEL"
         )
 
         registro = {
-            "Sigla": (
-                codigo
-            ),
-            "Indicador": (
-                linha[
-                    "NOME"
-                ]
-            ),
-            str(
-                ano_base
-            ): (
-                formatar_indicador(
+            "Sigla": codigo,
+            "Indicador": linha["NOME"],
+            str(ano_base): (
+                "N/A"
+                if nao_aplicavel
+                else formatar_indicador(
                     codigo,
-                    linha[
-                        "BASE"
-                    ],
+                    linha["BASE"],
                 )
             ),
         }
 
         if ano_intermediario is not None:
-
-            registro[
-                str(
-                    ano_intermediario
-                )
-            ] = (
-                formatar_indicador(
+            registro[str(ano_intermediario)] = (
+                "N/A"
+                if nao_aplicavel
+                else formatar_indicador(
                     codigo,
-                    linha[
-                        "INTERMEDIARIO"
-                    ],
+                    linha["INTERMEDIARIO"],
                 )
             )
 
-        registro[
-            str(
-                ano_recente
-            )
-        ] = (
-            formatar_indicador(
+        registro[str(ano_recente)] = (
+            "N/A"
+            if nao_aplicavel
+            else formatar_indicador(
                 codigo,
-                linha[
-                    "RECENTE"
-                ],
+                linha["RECENTE"],
             )
         )
 
-        registro[
-            "Variação base → recente"
-        ] = (
-            linha[
-                "DELTA"
-            ]
+        registro["Variação base → recente"] = (
+            "N/A"
+            if nao_aplicavel
+            else linha["DELTA"]
         )
 
-        registro[
-            "Trajetória"
-        ] = (
-            linha[
-                "TRAJETORIA"
-            ]
+        registro["Trajetória"] = (
+            "N/A"
+            if nao_aplicavel
+            else linha["TRAJETORIA"]
         )
 
         registros.append(
@@ -1326,19 +1320,17 @@ def montar_tabela_relatorio(
 # DASHBOARD — CARDS
 # ============================================================
 
+
 def exibir_cards_dashboard(
     cards,
     codigos,
     ano_base,
 ):
-
     if cards.empty:
         return
 
     parte = cards.loc[
-        cards[
-            "INDICADOR"
-        ].isin(
+        cards["INDICADOR"].isin(
             codigos
         )
     ]
@@ -1346,64 +1338,53 @@ def exibir_cards_dashboard(
     ordem = {
         codigo: indice
         for indice, codigo
-        in enumerate(
-            codigos
-        )
+        in enumerate(codigos)
     }
 
     parte = (
         parte
         .assign(
-            _ORDEM=parte[
-                "INDICADOR"
-            ].map(
+            _ORDEM=parte["INDICADOR"].map(
                 ordem
             )
         )
-        .sort_values(
-            "_ORDEM"
-        )
+        .sort_values("_ORDEM")
     )
 
     colunas = st.columns(
-        len(
-            codigos
-        )
+        len(codigos)
     )
 
-    for indice, (
-        _,
-        linha,
-    ) in enumerate(
+    for indice, (_, linha) in enumerate(
         parte.iterrows()
     ):
+        codigo = linha["INDICADOR"]
 
-        codigo = (
-            linha[
-                "INDICADOR"
-            ]
-        )
+        aplicabilidade = str(
+            linha.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        ).strip().upper()
 
-        with colunas[
-            indice
-        ]:
-
+        with colunas[indice]:
             st.metric(
                 label=(
                     f"{codigo} — "
                     f"{NOMES_INDICADORES[codigo]}"
                 ),
-                value=(
-                    linha[
-                        "VALOR_RECENTE_FMT"
-                    ]
-                ),
+                value=linha["VALOR_RECENTE_FMT"],
             )
 
-            st.caption(
-                f"vs. {ano_base}: "
-                f"{linha['DELTA_FMT']}"
-            )
+            if aplicabilidade == "NAO_APLICAVEL":
+                st.caption(
+                    "Não aplicável ao layout setorial."
+                )
+            else:
+                st.caption(
+                    f"vs. {ano_base}: "
+                    f"{linha['DELTA_FMT']}"
+                )
 
 
 # ============================================================
@@ -1920,6 +1901,68 @@ if empresa_selecionada is not None:
         st.stop()
 
 
+
+    # ========================================================
+    # LAYOUT CONTÁBIL
+    # ========================================================
+
+    layouts_detectados = (
+        quadro_inds["LAYOUT"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+        if (
+            not quadro_inds.empty
+            and "LAYOUT" in quadro_inds.columns
+        )
+        else []
+    )
+
+    layout_atual = (
+        " / ".join(
+            layouts_detectados
+        )
+        if layouts_detectados
+        else "N/D"
+    )
+
+    tratamento_setorial = (
+        bool(layouts_detectados)
+        and any(
+            layout != "PADRAO"
+            for layout in layouts_detectados
+        )
+    )
+
+    qtd_indicadores_aplicaveis = (
+        int(
+            quadro_inds["APLICABILIDADE"]
+            .eq("APLICAVEL")
+            .sum()
+        )
+        if (
+            not quadro_inds.empty
+            and "APLICABILIDADE"
+            in quadro_inds.columns
+        )
+        else len(
+            cards_dashboard
+        )
+    )
+
+    if tratamento_setorial:
+        st.info(
+            "Layout contábil setorial detectado: "
+            f"**{layout_atual}**. "
+            "O sistema não força o plano de contas tradicional. "
+            "Indicadores incompatíveis aparecem como **N/A**; "
+            "as demonstrações são apresentadas pelas contas "
+            "fixas efetivamente publicadas pela CVM. "
+            "Na DRE setorial, a análise vertical tradicional "
+            "é classificada como N/A."
+        )
+
     # ========================================================
     # EXPORTAÇÃO
     # ========================================================
@@ -1928,6 +1971,8 @@ if empresa_selecionada is not None:
         "DENOM_CIA": nome,
         "CD_CVM": cd_cvm,
         "CNPJ_CIA": cnpj,
+        "LAYOUT_CVM": layout_atual,
+        "TRATAMENTO_SETORIAL": tratamento_setorial,
     }
 
     try:
@@ -2103,7 +2148,7 @@ if empresa_selecionada is not None:
             st.metric(
                 "Indicadores disponíveis",
                 (
-                    f"{len(cards_dashboard)} / 12"
+                    f"{qtd_indicadores_aplicaveis} / 12"
                 ),
             )
 
@@ -2394,12 +2439,20 @@ if empresa_selecionada is not None:
             "Demonstração do Resultado"
         )
 
-        st.caption(
-            f"VA = Valor Absoluto em R$ mil | "
-            f"AV = Análise Vertical (%) | "
-            f"AH = Análise Horizontal — índice base fixa "
-            f"{ano_base} = 100%"
-        )
+        if tratamento_setorial:
+            st.caption(
+                f"VA = Valor Absoluto em R$ mil | "
+                f"AV = N/A para a DRE deste layout setorial | "
+                f"AH = Análise Horizontal — índice base fixa "
+                f"{ano_base} = 100%"
+            )
+        else:
+            st.caption(
+                f"VA = Valor Absoluto em R$ mil | "
+                f"AV = Análise Vertical (%) | "
+                f"AH = Análise Horizontal — índice base fixa "
+                f"{ano_base} = 100%"
+            )
 
         renderizar_tabela_padronizada(
             dre,
@@ -2544,16 +2597,26 @@ if empresa_selecionada is not None:
                     )
                 )
 
+                detalhe_na = (
+                    str(
+                        detalhe.get(
+                            "APLICABILIDADE",
+                            "APLICAVEL",
+                        )
+                    )
+                    == "NAO_APLICAVEL"
+                )
+
                 resultado = (
-                    detalhe[
-                        "RESULTADO"
-                    ]
+                    "N/A"
+                    if detalhe_na
+                    else detalhe["RESULTADO"]
                 )
 
                 formula = (
-                    detalhe[
-                        "FORMULA"
-                    ]
+                    "Não aplicada ao layout setorial."
+                    if detalhe_na
+                    else detalhe["FORMULA"]
                 )
 
                 st.metric(
@@ -2561,11 +2624,23 @@ if empresa_selecionada is not None:
                         f"{indicador_escolhido} — "
                         f"{NOMES_INDICADORES[indicador_escolhido]}"
                     ),
-                    formatar_indicador(
-                        indicador_escolhido,
-                        resultado,
+                    (
+                        "N/A"
+                        if detalhe_na
+                        else formatar_indicador(
+                            indicador_escolhido,
+                            resultado,
+                        )
                     ),
                 )
+
+                if detalhe_na:
+                    st.info(
+                        detalhe.get(
+                            "MOTIVO_NA",
+                            "Indicador não aplicável ao layout setorial.",
+                        )
+                    )
 
                 st.markdown(
                     "**Fórmula utilizada**"
@@ -2610,11 +2685,13 @@ if empresa_selecionada is not None:
                             ),
 
                             "Valor (R$ mil)": (
-                                formatar_va(
-                                    valor
+                                "N/A"
+                                if detalhe_na
+                                else (
+                                    formatar_va(valor)
+                                    if valor is not None
+                                    else "N/D"
                                 )
-                                if valor is not None
-                                else "N/D"
                             ),
                         }
                     )
@@ -3075,11 +3152,30 @@ if empresa_selecionada is not None:
                         ]
                     )
 
+                    linha_na = (
+                        str(
+                            linha.get(
+                                "APLICABILIDADE",
+                                "APLICAVEL",
+                            )
+                        )
+                        == "NAO_APLICAVEL"
+                    )
+
                     titulo_expander = (
                         f"{codigo} — "
                         f"{linha['NOME']} | "
                         f"{linha['TRAJETORIA']}"
                     )
+
+                    if linha_na:
+                        with st.expander(
+                            titulo_expander
+                        ):
+                            st.info(
+                                linha["INTERPRETACAO"]
+                            )
+                        continue
 
                     with st.expander(
                         titulo_expander

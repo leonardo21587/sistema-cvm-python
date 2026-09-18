@@ -293,6 +293,7 @@ def serie_indicador(
 # DADOS DOS CARDS
 # ============================================================
 
+
 def montar_cards_dashboard(
     quadro: pd.DataFrame,
     anos: list[int] | tuple[int, ...] | None = None,
@@ -324,17 +325,61 @@ def montar_cards_dashboard(
         if linha is None:
             continue
 
-        base = _valor_ano(
-            quadro,
-            codigo,
-            ano_base,
+        aplicabilidade = str(
+            linha.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        ).strip().upper()
+
+        motivo_na = linha.get(
+            "MOTIVO_NA",
+            None,
         )
 
-        recente = _valor_ano(
-            quadro,
-            codigo,
-            ano_recente,
+        aplicavel = (
+            aplicabilidade
+            != "NAO_APLICAVEL"
         )
+
+        base = (
+            _valor_ano(
+                quadro,
+                codigo,
+                ano_base,
+            )
+            if aplicavel
+            else None
+        )
+
+        recente = (
+            _valor_ano(
+                quadro,
+                codigo,
+                ano_recente,
+            )
+            if aplicavel
+            else None
+        )
+
+        if aplicavel:
+            valor_fmt = (
+                formatar_valor_dashboard(
+                    codigo,
+                    recente,
+                )
+            )
+
+            delta_fmt = (
+                formatar_delta_dashboard(
+                    codigo,
+                    base,
+                    recente,
+                )
+            )
+        else:
+            valor_fmt = "N/A"
+            delta_fmt = "N/A"
 
         registros.append(
             {
@@ -344,12 +389,7 @@ def montar_cards_dashboard(
                 "ANO_RECENTE": ano_recente,
                 "VALOR_BASE": base,
                 "VALOR_RECENTE": recente,
-                "VALOR_RECENTE_FMT": (
-                    formatar_valor_dashboard(
-                        codigo,
-                        recente,
-                    )
-                ),
+                "VALOR_RECENTE_FMT": valor_fmt,
                 "DELTA_BASE_RECENTE": (
                     None
                     if (
@@ -358,12 +398,16 @@ def montar_cards_dashboard(
                     )
                     else recente - base
                 ),
-                "DELTA_FMT": (
-                    formatar_delta_dashboard(
-                        codigo,
-                        base,
-                        recente,
-                    )
+                "DELTA_FMT": delta_fmt,
+                "APLICABILIDADE": (
+                    "APLICAVEL"
+                    if aplicavel
+                    else "NAO_APLICAVEL"
+                ),
+                "MOTIVO_NA": motivo_na,
+                "LAYOUT": linha.get(
+                    "LAYOUT",
+                    None,
                 ),
             }
         )
@@ -376,6 +420,7 @@ def montar_cards_dashboard(
 # ============================================================
 # PREPARAÇÃO DE DADOS PARA GRÁFICOS
 # ============================================================
+
 
 def preparar_series_grafico(
     quadro: pd.DataFrame,
@@ -398,6 +443,27 @@ def preparar_series_grafico(
             raise ValueError(
                 f"Indicador inválido: {codigo}"
             )
+
+        linha = _linha_indicador(
+            quadro,
+            codigo,
+        )
+
+        if linha is None:
+            continue
+
+        aplicabilidade = str(
+            linha.get(
+                "APLICABILIDADE",
+                "APLICAVEL",
+            )
+        ).strip().upper()
+
+        if (
+            aplicabilidade
+            == "NAO_APLICAVEL"
+        ):
+            continue
 
         for ano in anos_usados:
             valor = _valor_ano(
@@ -436,6 +502,7 @@ def preparar_series_grafico(
 # GRÁFICO GENÉRICO
 # ============================================================
 
+
 def grafico_linhas(
     quadro: pd.DataFrame,
     codigos: list[str],
@@ -459,6 +526,13 @@ def grafico_linhas(
     )
 
     for codigo in codigos:
+        if (
+            dados.empty
+            or "INDICADOR"
+            not in dados.columns
+        ):
+            continue
+
         parte = dados.loc[
             dados["INDICADOR"]
             == codigo
@@ -551,6 +625,45 @@ def grafico_linhas(
     if percentual:
         fig.update_yaxes(
             ticksuffix="%",
+        )
+
+    if len(fig.data) == 0:
+        linhas_grupo = quadro.loc[
+            quadro[
+                "INDICADOR"
+            ].astype(str).isin(
+                codigos
+            )
+        ].copy()
+
+        if (
+            not linhas_grupo.empty
+            and "APLICABILIDADE"
+            in linhas_grupo.columns
+            and linhas_grupo[
+                "APLICABILIDADE"
+            ].astype(str).eq(
+                "NAO_APLICAVEL"
+            ).all()
+        ):
+            mensagem = (
+                "Não aplicável ao layout setorial."
+            )
+        else:
+            mensagem = (
+                "Dados não disponíveis para o período."
+            )
+
+        fig.add_annotation(
+            text=mensagem,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font={
+                "size": 14,
+            },
         )
 
     return fig

@@ -6,6 +6,7 @@ import time
 import traceback
 import zipfile
 from io import BytesIO
+from openpyxl import load_workbook
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -102,7 +103,12 @@ CHAVES_GRAFICOS = {
 
 try:
     from src.demonstracoes import resumo_empresa
-    from src.padronizacao import montar_demonstracao_padronizada
+    from src.padronizacao import montar_demonstracao_apresentacao
+    from src.layouts_cvm import (
+        LAYOUT_PADRAO,
+        LAYOUT_FINANCEIRA,
+        LAYOUT_SEGUROS_ESPECIAL,
+    )
     from src.indicadores import (
         quadro_indicadores,
         validar_dupont,
@@ -375,6 +381,40 @@ def descobrir_casos(
             "VALE S.A. — referência de regressão",
         )
 
+    # Regressões setoriais obrigatórias.
+    # Estes IDs são usados somente na auditoria/teste de regressão,
+    # nunca na lógica de classificação do aplicativo.
+    amostras_setoriais = [
+        (
+            "019348",
+            "layout financeiro",
+            "Itaú — referência FINANCEIRA",
+        ),
+        (
+            "000906",
+            "layout financeiro",
+            "Bradesco — referência FINANCEIRA",
+        ),
+        (
+            "023159",
+            "layout seguros especial",
+            "BB Seguridade — referência SEGUROS_ESPECIAL",
+        ),
+        (
+            "024180",
+            "layout seguros especial",
+            "IRB — referência SEGUROS_ESPECIAL",
+        ),
+    ]
+
+    for cd, caso_setorial, detalhe_setorial in amostras_setoriais:
+        if catalogo["CD_CVM"].eq(cd).any():
+            incluir(
+                cd,
+                caso_setorial,
+                detalhe_setorial,
+            )
+
     # Homônimos reais do catálogo.
     for _, linha in homonimos.head(6).iterrows():
         incluir(
@@ -621,7 +661,7 @@ def descobrir_casos(
     # Limita a amostra profunda para manter o teste rápido utilizável.
     # Casos extremos ficam antes da amostra genérica.
     prioridade = consolidado["CASO"].str.contains(
-        "benchmark|homônimo|negativo|prejuízo|zero|mudança|incompleto",
+        "benchmark|layout|homônimo|negativo|prejuízo|zero|mudança|incompleto",
         case=False,
         regex=True,
     )
@@ -704,7 +744,7 @@ def testar_empresa(
             "BPP",
             "DRE",
         ]:
-            quadro = montar_demonstracao_padronizada(
+            quadro = montar_demonstracao_apresentacao(
                 cd_cvm=cd_cvm,
                 demonstracao=dem,
                 anos=janela,
@@ -841,6 +881,164 @@ def testar_empresa(
             ),
             caso,
         )
+
+        # ----------------------------------------------------
+        # LAYOUT E APLICABILIDADE
+        # ----------------------------------------------------
+
+        layouts = (
+            indicadores["LAYOUT"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+            if (
+                not indicadores.empty
+                and "LAYOUT" in indicadores.columns
+            )
+            else []
+        )
+
+        layout_codigo = (
+            layouts[0]
+            if len(layouts) == 1
+            else None
+        )
+
+        aplicabilidades = (
+            indicadores["APLICABILIDADE"]
+            .astype(str)
+            if (
+                not indicadores.empty
+                and "APLICABILIDADE" in indicadores.columns
+            )
+            else pd.Series(dtype="string")
+        )
+
+        qtd_aplicaveis = int(
+            aplicabilidades
+            .eq("APLICAVEL")
+            .sum()
+        )
+
+        qtd_na = int(
+            aplicabilidades
+            .eq("NAO_APLICAVEL")
+            .sum()
+        )
+
+        esperados_por_layout = {
+            LAYOUT_PADRAO: (12, 0),
+            LAYOUT_FINANCEIRA: (2, 10),
+            LAYOUT_SEGUROS_ESPECIAL: (2, 10),
+            "OUTRO": (0, 12),
+        }
+
+        esperado = (
+            esperados_por_layout.get(
+                layout_codigo
+            )
+        )
+
+        layout_ok = (
+            esperado is not None
+            and (
+                qtd_aplicaveis,
+                qtd_na,
+            )
+            == esperado
+        )
+
+        adicionar_resultado(
+            resultados,
+            cd_cvm,
+            empresa,
+            "Layout e aplicabilidade",
+            "OK" if layout_ok else "FALHA",
+            (
+                f"layout={layout_codigo}; "
+                f"aplicáveis={qtd_aplicaveis}; "
+                f"N/A={qtd_na}; "
+                f"esperado={esperado}"
+            ),
+            caso,
+        )
+
+        tratamento_setorial = (
+            layout_codigo
+            in {
+                LAYOUT_FINANCEIRA,
+                LAYOUT_SEGUROS_ESPECIAL,
+            }
+        )
+
+        if tratamento_setorial:
+            dre_apresentacao = (
+                demonstracoes.get(
+                    "DRE"
+                )
+            )
+
+            colunas_av = (
+                [
+                    coluna
+                    for coluna
+                    in dre_apresentacao.columns
+                    if str(
+                        coluna
+                    ).startswith(
+                        "AV_"
+                    )
+                ]
+                if isinstance(
+                    dre_apresentacao,
+                    pd.DataFrame,
+                )
+                else []
+            )
+
+            av_na = bool(
+                getattr(
+                    dre_apresentacao,
+                    "attrs",
+                    {},
+                ).get(
+                    "AV_NAO_APLICAVEL",
+                    False,
+                )
+            )
+
+            av_sem_valores = bool(
+                colunas_av
+                and all(
+                    dre_apresentacao[
+                        coluna
+                    ].isna().all()
+                    for coluna
+                    in colunas_av
+                )
+            )
+
+            adicionar_resultado(
+                resultados,
+                cd_cvm,
+                empresa,
+                "DRE setorial — AV não aplicável",
+                (
+                    "OK"
+                    if (
+                        av_na
+                        and av_sem_valores
+                    )
+                    else "FALHA"
+                ),
+                (
+                    f"flag={av_na}; "
+                    f"colunas AV={len(colunas_av)}; "
+                    f"todas vazias={av_sem_valores}"
+                ),
+                caso,
+            )
 
         infinitos_ind = 0
 
@@ -1062,6 +1260,78 @@ def testar_empresa(
                 caso,
             )
 
+            total_series = sum(
+                len(
+                    figura.data
+                )
+                for figura
+                in graficos.values()
+            )
+
+            if layout_codigo == LAYOUT_PADRAO:
+                series_ok = (
+                    total_series == 12
+                )
+                detalhe_series = (
+                    f"layout padrão; séries={total_series}; "
+                    "esperado=12"
+                )
+
+            elif tratamento_setorial:
+                rentabilidade_series = len(
+                    graficos[
+                        "rentabilidade"
+                    ].data
+                )
+
+                outras_series = sum(
+                    len(
+                        graficos[
+                            chave
+                        ].data
+                    )
+                    for chave in [
+                        "estrutura",
+                        "liquidez",
+                        "icj",
+                        "ga",
+                    ]
+                )
+
+                series_ok = (
+                    total_series == 2
+                    and rentabilidade_series == 2
+                    and outras_series == 0
+                )
+
+                detalhe_series = (
+                    f"layout={layout_codigo}; "
+                    f"séries totais={total_series}; "
+                    f"rentabilidade={rentabilidade_series}; "
+                    f"demais={outras_series}"
+                )
+
+            else:
+                series_ok = (
+                    total_series == 0
+                )
+
+                detalhe_series = (
+                    f"layout={layout_codigo}; "
+                    f"séries totais={total_series}; "
+                    "esperado=0"
+                )
+
+            adicionar_resultado(
+                resultados,
+                cd_cvm,
+                empresa,
+                "Dashboard — séries por layout",
+                "OK" if series_ok else "FALHA",
+                detalhe_series,
+                caso,
+            )
+
             linha_catalogo = pd.read_parquet(
                 ARQUIVO_EMPRESAS
             )
@@ -1085,6 +1355,13 @@ def testar_empresa(
                 "DENOM_CIA": empresa,
                 "CD_CVM": cd_cvm,
                 "CNPJ_CIA": cnpj,
+                "LAYOUT_CVM": (
+                    layout_codigo
+                    or "N/D"
+                ),
+                "TRATAMENTO_SETORIAL": (
+                    tratamento_setorial
+                ),
             }
 
             conteudo_xlsx = gerar_excel_sistema(
@@ -1126,6 +1403,92 @@ def testar_empresa(
                 ),
                 caso,
             )
+
+            if tratamento_setorial:
+                wb = load_workbook(
+                    BytesIO(
+                        conteudo_xlsx
+                    ),
+                    data_only=False,
+                    read_only=True,
+                )
+
+                ws_ind = wb[
+                    "Indicadores"
+                ]
+
+                valores_ind = [
+                    celula.value
+                    for linha
+                    in ws_ind.iter_rows()
+                    for celula
+                    in linha
+                ]
+
+                ws_dre = wb[
+                    "DRE"
+                ]
+
+                valores_dre = [
+                    celula.value
+                    for linha
+                    in ws_dre.iter_rows()
+                    for celula
+                    in linha
+                ]
+
+                ws_id = wb[
+                    "Identificação"
+                ]
+
+                id_campos = {
+                    str(
+                        ws_id.cell(
+                            linha,
+                            1,
+                        ).value
+                        or ""
+                    ): ws_id.cell(
+                        linha,
+                        2,
+                    ).value
+                    for linha
+                    in range(
+                        1,
+                        ws_id.max_row
+                        + 1,
+                    )
+                }
+
+                export_setorial_ok = (
+                    "N/A" in valores_ind
+                    and "N/A" in valores_dre
+                    and id_campos.get(
+                        "Layout CVM"
+                    )
+                    == layout_codigo
+                )
+
+                adicionar_resultado(
+                    resultados,
+                    cd_cvm,
+                    empresa,
+                    "Exportação setorial — N/A e layout",
+                    (
+                        "OK"
+                        if export_setorial_ok
+                        else "FALHA"
+                    ),
+                    (
+                        f"N/A indicadores={'N/A' in valores_ind}; "
+                        f"N/A DRE={'N/A' in valores_dre}; "
+                        f"layout exportado="
+                        f"{id_campos.get('Layout CVM')}"
+                    ),
+                    caso,
+                )
+
+                wb.close()
 
     except Exception as exc:
         adicionar_resultado(

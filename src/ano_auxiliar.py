@@ -11,7 +11,12 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from config.settings import ANOS_ANALISE, PROCESSED_DIR
+
+from config.settings import (
+    ANOS_ANALISE,
+    PROCESSED_DIR,
+)
+
 from src.tratamento import (
     converter_para_mil_reais,
     ler_csv_cvm,
@@ -20,18 +25,27 @@ from src.tratamento import (
 )
 
 
-ANO_BASE = min(ANOS_ANALISE)
-ANO_AUXILIAR = ANO_BASE - 1
+ANO_BASE = min(
+    ANOS_ANALISE
+)
+
+ANO_AUXILIAR = (
+    ANO_BASE
+    - 1
+)
+
 
 DESTINO = (
     PROCESSED_DIR
     / f"saldos_auxiliares_{ANO_AUXILIAR}.parquet"
 )
 
+
 DESTINO_AUDITORIA = (
     PROCESSED_DIR
     / f"auditoria_saldos_auxiliares_{ANO_AUXILIAR}.csv"
 )
+
 
 DESTINO_CONFLITOS = (
     PROCESSED_DIR
@@ -39,65 +53,102 @@ DESTINO_CONFLITOS = (
 )
 
 
-CONTAS_NECESSARIAS = {
-    "BPA": {"1"},      # Ativo Total
-    "BPP": {"2.03"},   # Patrimônio Líquido
-}
+def _normalizar_ordem(
+    serie: pd.Series,
+) -> pd.Series:
 
-
-def _normalizar_ordem(serie: pd.Series) -> pd.Series:
     return (
         serie
         .fillna("")
-        .map(remover_acentos)
+        .map(
+            remover_acentos
+        )
         .str.upper()
         .str.strip()
+    )
+
+
+def _normalizar_descricao(
+    serie: pd.Series,
+) -> pd.Series:
+
+    return (
+        serie
+        .fillna("")
+        .map(
+            remover_acentos
+        )
+        .str.upper()
+        .str.strip()
+        .str.replace(
+            r"\s+",
+            " ",
+            regex=True,
+        )
     )
 
 
 def _carregar_demonstracao_auxiliar(
     demonstracao: str,
 ) -> pd.DataFrame:
-    """
-    Usa a DFP do primeiro ano exibido (2023) para recuperar
-    o comparativo do ano anterior (2022), necessário às médias
-    de Ativo e Patrimônio Líquido.
-    """
+
     df = ler_csv_cvm(
         ANO_BASE,
         demonstracao,
     )
 
-    df = padronizar_tipos(df)
-
-    df["ANO_EXERCICIO"] = (
-        df["DT_FIM_EXERC"]
-        .dt.year
-        .astype("Int64")
+    df = padronizar_tipos(
+        df
     )
 
-    ordem = _normalizar_ordem(
-        df["ORDEM_EXERC"]
+    df[
+        "ANO_EXERCICIO"
+    ] = (
+        df[
+            "DT_FIM_EXERC"
+        ]
+        .dt.year
+        .astype(
+            "Int64"
+        )
+    )
+
+    ordem = (
+        _normalizar_ordem(
+            df[
+                "ORDEM_EXERC"
+            ]
+        )
     )
 
     df = df[
-        df["ANO_EXERCICIO"].eq(
+        df[
+            "ANO_EXERCICIO"
+        ].eq(
             ANO_AUXILIAR
         )
-        & ordem.eq("PENULTIMO")
+        & ordem.eq(
+            "PENULTIMO"
+        )
     ].copy()
 
     if df.empty:
+
         raise RuntimeError(
-            f"Nenhum saldo auxiliar de {ANO_AUXILIAR} "
-            f"foi encontrado em {demonstracao} da DFP "
+            "Nenhum saldo auxiliar de "
+            f"{ANO_AUXILIAR} foi encontrado "
+            f"em {demonstracao} da DFP "
             f"{ANO_BASE}."
         )
 
-    if df["VERSAO"].isna().any():
+    if df[
+        "VERSAO"
+    ].isna().any():
+
         raise RuntimeError(
-            f"VERSAO ausente/inválida em {demonstracao} "
-            f"para o ano auxiliar."
+            "VERSAO ausente/inválida "
+            f"em {demonstracao} "
+            "para o ano auxiliar."
         )
 
     grupo_versao = [
@@ -106,39 +157,81 @@ def _carregar_demonstracao_auxiliar(
         "ANO_EXERCICIO",
     ]
 
-    versao_maxima = df.groupby(
-        grupo_versao,
-        dropna=False,
-    )["VERSAO"].transform("max")
+    versao_maxima = (
+        df.groupby(
+            grupo_versao,
+            dropna=False,
+        )[
+            "VERSAO"
+        ]
+        .transform(
+            "max"
+        )
+    )
 
     df = df[
-        df["VERSAO"].eq(
+        df[
+            "VERSAO"
+        ].eq(
             versao_maxima
         )
     ].copy()
 
-    df = converter_para_mil_reais(df)
+    df = converter_para_mil_reais(
+        df
+    )
 
-    df = df[
-        df["CD_CONTA"].isin(
-            CONTAS_NECESSARIAS[
-                demonstracao
+    if demonstracao == "BPA":
+
+        df = df[
+            df[
+                "CD_CONTA"
             ]
+            .astype(str)
+            .str.strip()
+            .eq("1")
+        ].copy()
+
+    elif demonstracao == "BPP":
+
+        descricao = (
+            _normalizar_descricao(
+                df[
+                    "DS_CONTA"
+                ]
+            )
         )
-    ].copy()
+
+        df = df[
+            descricao.eq(
+                "PATRIMONIO LIQUIDO CONSOLIDADO"
+            )
+        ].copy()
+
+    else:
+
+        raise ValueError(
+            "Demonstracao auxiliar deve "
+            "ser BPA ou BPP."
+        )
 
     return df
 
 
 def construir_saldos_auxiliares() -> pd.DataFrame:
+
     PROCESSED_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     partes = [
-        _carregar_demonstracao_auxiliar("BPA"),
-        _carregar_demonstracao_auxiliar("BPP"),
+        _carregar_demonstracao_auxiliar(
+            "BPA"
+        ),
+        _carregar_demonstracao_auxiliar(
+            "BPP"
+        ),
     ]
 
     base = pd.concat(
@@ -146,7 +239,9 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
         ignore_index=True,
     )
 
-    antes_duplicatas = len(base)
+    antes_duplicatas = len(
+        base
+    )
 
     base = (
         base
@@ -155,7 +250,10 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
     )
 
     duplicatas_exatas = (
-        antes_duplicatas - len(base)
+        antes_duplicatas
+        - len(
+            base
+        )
     )
 
     chave = [
@@ -165,10 +263,6 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
         "CD_CONTA",
     ]
 
-    # Duplicidades econômicas:
-    # se a mesma chave aparece mais de uma vez com o MESMO VL_CONTA,
-    # as linhas são equivalentes para o saldo contábil necessário.
-    # Preservamos uma linha e auditamos as demais.
     duplicadas_chave = base[
         base.duplicated(
             subset=chave,
@@ -177,6 +271,7 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
     ].copy()
 
     if not duplicadas_chave.empty:
+
         diagnostico = (
             duplicadas_chave
             .groupby(
@@ -184,23 +279,46 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
                 dropna=False,
             )
             .agg(
-                N_LINHAS=("VL_CONTA", "size"),
-                N_VALORES=("VL_CONTA", "nunique"),
-                VL_MIN=("VL_CONTA", "min"),
-                VL_MAX=("VL_CONTA", "max"),
+                N_LINHAS=(
+                    "VL_CONTA",
+                    "size",
+                ),
+                N_VALORES=(
+                    "VL_CONTA",
+                    "nunique",
+                ),
+                VL_MIN=(
+                    "VL_CONTA",
+                    "min",
+                ),
+                VL_MAX=(
+                    "VL_CONTA",
+                    "max",
+                ),
             )
             .reset_index()
         )
 
-        chaves_conflitantes = diagnostico[
-            diagnostico["N_VALORES"] > 1
-        ][chave]
+        chaves_conflitantes = (
+            diagnostico[
+                diagnostico[
+                    "N_VALORES"
+                ]
+                > 1
+            ][
+                chave
+            ]
+        )
 
         if not chaves_conflitantes.empty:
-            conflitos = duplicadas_chave.merge(
-                chaves_conflitantes,
-                on=chave,
-                how="inner",
+
+            conflitos = (
+                duplicadas_chave
+                .merge(
+                    chaves_conflitantes,
+                    on=chave,
+                    how="inner",
+                )
             )
 
             conflitos.to_csv(
@@ -211,14 +329,15 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
             )
 
             raise RuntimeError(
-                "Existem conflitos reais nos saldos auxiliares "
+                "Existem conflitos reais "
+                "nos saldos auxiliares "
                 "(mesma chave com valores diferentes). "
                 f"Auditoria: {DESTINO_CONFLITOS}"
             )
 
-        # Mesma chave e mesmo valor: colapsa de forma determinística.
         base = (
-            base.sort_values(
+            base
+            .sort_values(
                 chave
                 + [
                     "DT_REFER",
@@ -233,6 +352,7 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
         )
 
     if DESTINO_CONFLITOS.exists():
+
         DESTINO_CONFLITOS.unlink()
 
     colunas_saida = [
@@ -251,7 +371,9 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
     ]
 
     base = (
-        base[colunas_saida]
+        base[
+            colunas_saida
+        ]
         .sort_values(
             [
                 "CD_CVM",
@@ -259,8 +381,44 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
                 "CD_CONTA",
             ]
         )
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
+
+    # Garantia semântica:
+    # cada empresa deve ter no máximo um Ativo Total e um
+    # Patrimônio Líquido Consolidado para o ano auxiliar.
+    contagem_empresa = (
+        base.groupby(
+            [
+                "CD_CVM",
+                "DEMONSTRACAO",
+            ],
+            dropna=False,
+        )
+        .size()
+        .reset_index(
+            name="N"
+        )
+    )
+
+    problemas = (
+        contagem_empresa[
+            contagem_empresa[
+                "N"
+            ]
+            > 1
+        ]
+    )
+
+    if not problemas.empty:
+
+        raise RuntimeError(
+            "Mais de uma conta auxiliar principal "
+            "foi encontrada para a mesma "
+            "empresa/demonstração."
+        )
 
     base.to_parquet(
         DESTINO,
@@ -273,19 +431,26 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
                 "ANO_EXERCICIO",
                 "DEMONSTRACAO",
                 "CD_CONTA",
+                "DS_CONTA",
             ],
             dropna=False,
         )
         .agg(
-            REGISTROS=("CD_CVM", "size"),
-            EMPRESAS=("CD_CVM", "nunique"),
+            REGISTROS=(
+                "CD_CVM",
+                "size",
+            ),
+            EMPRESAS=(
+                "CD_CVM",
+                "nunique",
+            ),
         )
         .reset_index()
     )
 
-    auditoria["DUPLICATAS_EXATAS_REMOVIDAS"] = (
-        duplicatas_exatas
-    )
+    auditoria[
+        "DUPLICATAS_EXATAS_REMOVIDAS"
+    ] = duplicatas_exatas
 
     auditoria.to_csv(
         DESTINO_AUDITORIA,
@@ -298,44 +463,130 @@ def construir_saldos_auxiliares() -> pd.DataFrame:
 
 
 def main() -> None:
-    print("=" * 70)
-    print("SISTEMA CVM - SALDOS AUXILIARES")
-    print("=" * 70)
 
-    base = construir_saldos_auxiliares()
+    print(
+        "="
+        * 70
+    )
 
-    print()
     print(
-        f"Ano auxiliar: {ANO_AUXILIAR}"
+        "SISTEMA CVM - SALDOS AUXILIARES"
     )
+
     print(
-        f"Registros finais: {len(base):,}"
+        "="
+        * 70
     )
-    print(
-        f"Empresas com Ativo Total: "
-        f"{base.loc[base['CD_CONTA'].eq('1'), 'CD_CVM'].nunique():,}"
+
+    base = (
+        construir_saldos_auxiliares()
     )
-    print(
-        f"Empresas com Patrimônio Líquido: "
-        f"{base.loc[base['CD_CONTA'].eq('2.03'), 'CD_CVM'].nunique():,}"
-    )
-    print()
-    print("Arquivo:")
-    print(DESTINO)
 
     print()
-    print("AUDITORIA:")
+
+    print(
+        f"Ano auxiliar: "
+        f"{ANO_AUXILIAR}"
+    )
+
+    print(
+        "Registros finais: "
+        f"{len(base):,}"
+    )
+
+    empresas_at = (
+        base.loc[
+            (
+                base[
+                    "DEMONSTRACAO"
+                ]
+                == "BPA"
+            )
+            & (
+                base[
+                    "CD_CONTA"
+                ]
+                .astype(str)
+                .str.strip()
+                .eq("1")
+            ),
+            "CD_CVM",
+        ]
+        .nunique()
+    )
+
+    empresas_pl = (
+        base.loc[
+            (
+                base[
+                    "DEMONSTRACAO"
+                ]
+                == "BPP"
+            )
+            & (
+                _normalizar_descricao(
+                    base[
+                        "DS_CONTA"
+                    ]
+                )
+                .eq(
+                    "PATRIMONIO LIQUIDO CONSOLIDADO"
+                )
+            ),
+            "CD_CVM",
+        ]
+        .nunique()
+    )
+
+    print(
+        "Empresas com Ativo Total: "
+        f"{empresas_at:,}"
+    )
+
+    print(
+        "Empresas com Patrimônio Líquido: "
+        f"{empresas_pl:,}"
+    )
+
+    print()
+
+    print(
+        "Arquivo:"
+    )
+
+    print(
+        DESTINO
+    )
+
+    print()
+
+    print(
+        "AUDITORIA:"
+    )
+
     print(
         base.groupby(
-            ["DEMONSTRACAO", "CD_CONTA"],
+            [
+                "DEMONSTRACAO",
+                "CD_CONTA",
+                "DS_CONTA",
+            ],
             dropna=False,
         )
         .agg(
-            REGISTROS=("CD_CVM", "size"),
-            EMPRESAS=("CD_CVM", "nunique"),
+            REGISTROS=(
+                "CD_CVM",
+                "size",
+            ),
+            EMPRESAS=(
+                "CD_CVM",
+                "nunique",
+            ),
         )
         .reset_index()
-        .to_string(index=False)
+        .to_string(
+            index=False
+        )
     )
 
 

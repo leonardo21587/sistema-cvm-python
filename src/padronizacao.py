@@ -5,6 +5,8 @@ from collections.abc import Iterable
 import pandas as pd
 
 from src.demonstracoes import montar_quadro_demonstracao
+from src.banco import carregar_demonstracao
+from src.layouts_cvm import LAYOUT_PADRAO, detectar_layout
 
 
 # ============================================================
@@ -815,6 +817,250 @@ def montar_demonstracao_padronizada(
     resultado.attrs[
         "ANOS"
     ] = anos_desc
+
+    return resultado
+
+
+# ============================================================
+# APRESENTAÇÃO CONSCIENTE DE LAYOUT
+# ============================================================
+
+def montar_demonstracao_apresentacao(
+    cd_cvm: str,
+    demonstracao: str,
+    anos: Iterable[int] | None = None,
+) -> pd.DataFrame:
+    # Mantém o modelo padronizado do professor para empresas
+    # de layout padrão. Para layouts setoriais, apresenta as
+    # contas fixas reais da CVM, sem forçar códigos de outro setor.
+    cd_cvm = _normalizar_cd_cvm(
+        cd_cvm
+    )
+
+    demonstracao = (
+        str(demonstracao)
+        .upper()
+        .strip()
+    )
+
+    if demonstracao not in MAPAS:
+        raise ValueError(
+            "DEMONSTRACAO deve ser BPA, BPP ou DRE."
+        )
+
+    quadro_fixo = (
+        montar_quadro_demonstracao(
+            cd_cvm=cd_cvm,
+            demonstracao=demonstracao,
+            anos=anos,
+            somente_contas_fixas=True,
+        )
+    )
+
+    if quadro_fixo.empty:
+        return pd.DataFrame()
+
+    anos_quadro = _anos_no_quadro(
+        quadro_fixo
+    )
+
+    if not anos_quadro:
+        return pd.DataFrame()
+
+    ano_recente = max(
+        anos_quadro
+    )
+
+    bpp_recente = carregar_demonstracao(
+        cd_cvm,
+        ano_recente,
+        "BPP",
+    )
+
+    dre_recente = carregar_demonstracao(
+        cd_cvm,
+        ano_recente,
+        "DRE",
+    )
+
+    layout = detectar_layout(
+        bpp_recente,
+        dre_recente,
+    )
+
+    if layout.codigo == LAYOUT_PADRAO:
+        resultado = (
+            montar_demonstracao_padronizada(
+                cd_cvm=cd_cvm,
+                demonstracao=demonstracao,
+                anos=anos,
+            )
+        )
+
+        resultado.attrs["LAYOUT"] = layout.codigo
+        resultado.attrs["APRESENTACAO_SETORIAL"] = False
+        resultado.attrs["AV_NAO_APLICAVEL"] = False
+
+        return resultado
+
+    registros = []
+
+    for ordem, (_, linha) in enumerate(
+        quadro_fixo.iterrows(),
+        start=1,
+    ):
+        codigo = str(
+            linha["CD_CONTA"]
+        ).strip()
+
+        descricao = str(
+            linha["DS_CONTA"]
+        ).strip()
+
+        registro = {
+            "ORDEM": ordem,
+            "LINHA": f"{codigo} — {descricao}",
+            "TIPO": "DIRETA",
+        }
+
+        for ano in anos_quadro:
+            registro[f"VA_{ano}"] = pd.to_numeric(
+                linha.get(
+                    ano,
+                    pd.NA,
+                ),
+                errors="coerce",
+            )
+
+        registros.append(
+            registro
+        )
+
+    resultado = pd.DataFrame(
+        registros
+    )
+
+    if demonstracao == "BPA":
+        codigo_base_av = "1"
+    elif demonstracao == "BPP":
+        codigo_base_av = "2"
+    else:
+        codigo_base_av = None
+
+    for ano in anos_quadro:
+        coluna_av = f"AV_{ano}"
+
+        if codigo_base_av is None:
+            resultado[coluna_av] = pd.NA
+            continue
+
+        linha_base = quadro_fixo.loc[
+            quadro_fixo["CD_CONTA"]
+            .astype(str)
+            .str.strip()
+            .eq(
+                codigo_base_av
+            )
+        ]
+
+        if len(linha_base) != 1:
+            resultado[coluna_av] = pd.NA
+            continue
+
+        denominador = pd.to_numeric(
+            linha_base.iloc[0].get(
+                ano,
+                pd.NA,
+            ),
+            errors="coerce",
+        )
+
+        if (
+            pd.isna(denominador)
+            or float(denominador) == 0
+        ):
+            resultado[coluna_av] = pd.NA
+            continue
+
+        resultado[coluna_av] = (
+            pd.to_numeric(
+                resultado[f"VA_{ano}"],
+                errors="coerce",
+            )
+            / float(denominador)
+            * 100.0
+        )
+
+    ano_base = min(
+        anos_quadro
+    )
+
+    for ano in anos_quadro:
+        valores_base = pd.to_numeric(
+            resultado[f"VA_{ano_base}"],
+            errors="coerce",
+        )
+
+        valores_atuais = pd.to_numeric(
+            resultado[f"VA_{ano}"],
+            errors="coerce",
+        )
+
+        valido = (
+            valores_base.notna()
+            & valores_atuais.notna()
+            & valores_base.ne(0)
+        )
+
+        ah = pd.Series(
+            pd.NA,
+            index=resultado.index,
+            dtype="Float64",
+        )
+
+        ah.loc[valido] = (
+            valores_atuais.loc[valido]
+            / valores_base.loc[valido]
+            * 100.0
+        )
+
+        resultado[f"AH_{ano}"] = ah
+
+    anos_desc = sorted(
+        anos_quadro,
+        reverse=True,
+    )
+
+    colunas = [
+        "ORDEM",
+        "LINHA",
+        "TIPO",
+    ]
+
+    for ano in anos_desc:
+        colunas.extend(
+            [
+                f"VA_{ano}",
+                f"AV_{ano}",
+                f"AH_{ano}",
+            ]
+        )
+
+    resultado = (
+        resultado[colunas]
+        .sort_values("ORDEM")
+        .reset_index(drop=True)
+    )
+
+    resultado.attrs["DEMONSTRACAO"] = demonstracao
+    resultado.attrs["ANO_BASE_AH"] = ano_base
+    resultado.attrs["ANOS"] = anos_desc
+    resultado.attrs["LAYOUT"] = layout.codigo
+    resultado.attrs["LAYOUT_DESCRICAO"] = layout.descricao
+    resultado.attrs["APRESENTACAO_SETORIAL"] = True
+    resultado.attrs["AV_NAO_APLICAVEL"] = (
+        demonstracao == "DRE"
+    )
 
     return resultado
 

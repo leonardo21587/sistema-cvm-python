@@ -7,8 +7,10 @@ import pandas as pd
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
 
 from config.settings import PROCESSED_DIR
 from src.analise_horizontal import calcular_analise_horizontal
@@ -19,9 +21,18 @@ from src.indicadores import (
     calcular_indicadores,
     validar_dupont,
 )
+from src.layouts_cvm import (
+    LAYOUT_PADRAO,
+    detectar_layout,
+    normalizar_descricao,
+)
 
 
-ARQUIVO_AUXILIAR = PROCESSED_DIR / "saldos_auxiliares_2022.parquet"
+ARQUIVO_AUXILIAR = (
+    PROCESSED_DIR
+    / "saldos_auxiliares_2022.parquet"
+)
+
 
 STATUS_ORDEM = {
     "OK": 0,
@@ -30,7 +41,8 @@ STATUS_ORDEM = {
     "BLOQUEIO": 3,
 }
 
-CONTAS_INDICADORES = {
+
+CONTAS_INDICADORES_PADRAO = {
     "BPA": {
         "1",
         "1.01",
@@ -59,8 +71,14 @@ CONTAS_INDICADORES = {
 }
 
 
-def _normalizar_cd_cvm(cd_cvm: str) -> str:
-    return str(cd_cvm).strip().zfill(6)
+def _normalizar_cd_cvm(
+    cd_cvm: str,
+) -> str:
+    return (
+        str(cd_cvm)
+        .strip()
+        .zfill(6)
+    )
 
 
 def _linha(
@@ -96,7 +114,11 @@ def _valor_conta(
     if len(linhas) != 1:
         return None
 
-    valor = linhas.iloc[0]["VL_CONTA"]
+    valor = (
+        linhas.iloc[0][
+            "VL_CONTA"
+        ]
+    )
 
     if pd.isna(valor):
         return None
@@ -113,9 +135,17 @@ def _quase_igual(
     tolerancia = max(
         tolerancia_abs,
         tolerancia_rel
-        * max(abs(a), abs(b), 1.0),
+        * max(
+            abs(a),
+            abs(b),
+            1.0,
+        ),
     )
-    return abs(a - b) <= tolerancia
+
+    return (
+        abs(a - b)
+        <= tolerancia
+    )
 
 
 def _validar_unicidade(
@@ -126,7 +156,9 @@ def _validar_unicidade(
     duplicadas = int(
         df["CD_CONTA"]
         .astype(str)
-        .duplicated(keep=False)
+        .duplicated(
+            keep=False
+        )
         .sum()
     )
 
@@ -143,7 +175,10 @@ def _validar_unicidade(
         "Integridade",
         f"Unicidade {demonstracao}",
         "BLOQUEIO",
-        f"{duplicadas} linhas pertencem a códigos de conta duplicados.",
+        (
+            f"{duplicadas} linhas pertencem "
+            "a códigos de conta duplicados."
+        ),
         ano,
     )
 
@@ -153,7 +188,10 @@ def _validar_escala(
     demonstracao: str,
     ano: int,
 ) -> dict[str, object]:
-    if "UNIDADE_SISTEMA" not in df.columns:
+    if (
+        "UNIDADE_SISTEMA"
+        not in df.columns
+    ):
         return _linha(
             "Integridade",
             f"Escala {demonstracao}",
@@ -194,10 +232,20 @@ def _validar_bp(
     bpp: pd.DataFrame,
     ano: int,
 ) -> dict[str, object]:
-    ativo = _valor_conta(bpa, "1")
-    passivo = _valor_conta(bpp, "2")
+    ativo = _valor_conta(
+        bpa,
+        "1",
+    )
 
-    if ativo is None or passivo is None:
+    passivo = _valor_conta(
+        bpp,
+        "2",
+    )
+
+    if (
+        ativo is None
+        or passivo is None
+    ):
         return _linha(
             "Reconciliação",
             "Ativo Total = Passivo Total",
@@ -206,14 +254,24 @@ def _validar_bp(
             ano,
         )
 
-    diferenca = ativo - passivo
+    diferenca = (
+        ativo
+        - passivo
+    )
 
-    if _quase_igual(ativo, passivo):
+    if _quase_igual(
+        ativo,
+        passivo,
+    ):
         return _linha(
             "Reconciliação",
             "Ativo Total = Passivo Total",
             "OK",
-            f"Ativo={ativo:.2f}; Passivo={passivo:.2f}; diferença={diferenca:.2f}.",
+            (
+                f"Ativo={ativo:.2f}; "
+                f"Passivo={passivo:.2f}; "
+                f"diferença={diferenca:.2f}."
+            ),
             ano,
         )
 
@@ -221,7 +279,11 @@ def _validar_bp(
         "Reconciliação",
         "Ativo Total = Passivo Total",
         "BLOQUEIO",
-        f"Ativo={ativo:.2f}; Passivo={passivo:.2f}; diferença={diferenca:.2f}.",
+        (
+            f"Ativo={ativo:.2f}; "
+            f"Passivo={passivo:.2f}; "
+            f"diferença={diferenca:.2f}."
+        ),
         ano,
     )
 
@@ -229,55 +291,134 @@ def _validar_bp(
 def _validar_identidades_dre(
     dre: pd.DataFrame,
     ano: int,
+    layout_codigo: str,
 ) -> list[dict[str, object]]:
-    """
-    Verifica os subtotais padronizados da DRE quando todas as contas
-    necessárias estiverem presentes.
-
-    As verificações ausentes são INFO, não BLOQUEIO, porque nem todas as
-    companhias necessariamente publicam todas as rubricas intermediárias.
-    """
     testes = [
-        ("3.03 = 3.01 + 3.02", "3.03", ["3.01", "3.02"]),
-        ("3.05 = 3.03 + 3.04", "3.05", ["3.03", "3.04"]),
-        ("3.07 = 3.05 + 3.06", "3.07", ["3.05", "3.06"]),
-        ("3.09 = 3.07 + 3.08", "3.09", ["3.07", "3.08"]),
-        ("3.11 = 3.09 + 3.10", "3.11", ["3.09", "3.10"]),
+        (
+            "3.03 = 3.01 + 3.02",
+            "3.03",
+            [
+                "3.01",
+                "3.02",
+            ],
+        ),
+        (
+            "3.05 = 3.03 + 3.04",
+            "3.05",
+            [
+                "3.03",
+                "3.04",
+            ],
+        ),
+        (
+            "3.07 = 3.05 + 3.06",
+            "3.07",
+            [
+                "3.05",
+                "3.06",
+            ],
+        ),
+        (
+            "3.09 = 3.07 + 3.08",
+            "3.09",
+            [
+                "3.07",
+                "3.08",
+            ],
+        ),
+        (
+            "3.11 = 3.09 + 3.10",
+            "3.11",
+            [
+                "3.09",
+                "3.10",
+            ],
+        ),
     ]
+
+    if (
+        layout_codigo
+        != LAYOUT_PADRAO
+    ):
+        return [
+            _linha(
+                "Reconciliação DRE",
+                nome,
+                "INFO",
+                (
+                    "Reconciliação estrutural padrão "
+                    "não aplicada ao layout setorial."
+                ),
+                ano,
+            )
+            for (
+                nome,
+                _subtotal,
+                _componentes,
+            )
+            in testes
+        ]
 
     saida = []
 
-    for nome, subtotal, componentes in testes:
-        v_subtotal = _valor_conta(dre, subtotal)
+    for (
+        nome,
+        subtotal,
+        componentes,
+    ) in testes:
+        v_subtotal = _valor_conta(
+            dre,
+            subtotal,
+        )
+
         valores = [
-            _valor_conta(dre, codigo)
-            for codigo in componentes
+            _valor_conta(
+                dre,
+                codigo,
+            )
+            for codigo
+            in componentes
         ]
 
-        if v_subtotal is None or any(
-            valor is None for valor in valores
+        if (
+            v_subtotal is None
+            or any(
+                valor is None
+                for valor
+                in valores
+            )
         ):
             saida.append(
                 _linha(
                     "Reconciliação DRE",
                     nome,
                     "INFO",
-                    "Verificação não aplicável: uma ou mais contas não foram publicadas.",
+                    (
+                        "Verificação não aplicável: "
+                        "uma ou mais contas não foram publicadas."
+                    ),
                     ano,
                 )
             )
             continue
 
-        calculado = float(sum(valores))
-        diferenca = v_subtotal - calculado
+        calculado = float(
+            sum(valores)
+        )
 
-        if _quase_igual(
-            v_subtotal,
-            calculado,
-        ):
-            status = "OK"
-        else:
-            status = "ALERTA"
+        diferenca = (
+            v_subtotal
+            - calculado
+        )
+
+        status = (
+            "OK"
+            if _quase_igual(
+                v_subtotal,
+                calculado,
+            )
+            else "ALERTA"
+        )
 
         saida.append(
             _linha(
@@ -296,10 +437,59 @@ def _validar_identidades_dre(
     return saida
 
 
+def _contas_requeridas_layout(
+    demonstracao: str,
+    layout,
+) -> set[str]:
+    if (
+        layout.codigo
+        == LAYOUT_PADRAO
+    ):
+        return set(
+            CONTAS_INDICADORES_PADRAO[
+                demonstracao
+            ]
+        )
+
+    if demonstracao == "BPA":
+        return {"1"}
+
+    if demonstracao == "BPP":
+        requeridas = {"2"}
+
+        if (
+            layout.codigo_pl
+            is not None
+        ):
+            requeridas.add(
+                str(
+                    layout.codigo_pl
+                )
+            )
+
+        return requeridas
+
+    if demonstracao == "DRE":
+        if (
+            layout.codigo_ll
+            is None
+        ):
+            return set()
+
+        return {
+            str(
+                layout.codigo_ll
+            )
+        }
+
+    return set()
+
+
 def _validar_contas_indicadores(
     demonstracao: str,
     df: pd.DataFrame,
     ano: int,
+    layout,
 ) -> dict[str, object]:
     publicadas = set(
         df["CD_CONTA"]
@@ -308,20 +498,39 @@ def _validar_contas_indicadores(
         .str.strip()
     )
 
-    requeridas = CONTAS_INDICADORES[
-        demonstracao
-    ]
+    requeridas = (
+        _contas_requeridas_layout(
+            demonstracao,
+            layout,
+        )
+    )
 
     faltantes = sorted(
-        requeridas - publicadas
+        requeridas
+        - publicadas
     )
 
     if not faltantes:
+        if (
+            layout.codigo
+            == LAYOUT_PADRAO
+        ):
+            detalhe = (
+                "Todas as contas mapeadas para "
+                "indicadores estão disponíveis."
+            )
+        else:
+            detalhe = (
+                "Contas necessárias aos indicadores "
+                "aplicáveis ao layout setorial "
+                "estão disponíveis."
+            )
+
         return _linha(
             "Indicadores",
             f"Contas necessárias {demonstracao}",
             "OK",
-            "Todas as contas mapeadas para indicadores estão disponíveis.",
+            detalhe,
             ano,
         )
 
@@ -329,7 +538,12 @@ def _validar_contas_indicadores(
         "Indicadores",
         f"Contas necessárias {demonstracao}",
         "ALERTA",
-        "Contas ausentes: " + ", ".join(faltantes),
+        (
+            "Contas ausentes: "
+            + ", ".join(
+                faltantes
+            )
+        ),
         ano,
     )
 
@@ -338,52 +552,93 @@ def _validar_av(
     cd_cvm: str,
     demonstracao: str,
     ano: int,
+    layout,
 ) -> dict[str, object]:
     av = calcular_analise_vertical(
         cd_cvm,
         demonstracao,
-        anos=[ano],
+        anos=[
+            ano
+        ],
     )
 
     conta_base = {
         "BPA": "1",
         "BPP": "2",
         "DRE": "3.01",
-    }[demonstracao]
+    }[
+        demonstracao
+    ]
 
     linha_base = av[
         av["CD_CONTA"]
         .astype(str)
-        .eq(conta_base)
+        .eq(
+            conta_base
+        )
     ]
 
-    coluna = f"AV_{ano}"
+    coluna = (
+        f"AV_{ano}"
+    )
 
     if (
         len(linha_base) != 1
-        or coluna not in av.columns
+        or coluna
+        not in av.columns
         or pd.isna(
-            linha_base.iloc[0][coluna]
+            linha_base.iloc[0][
+                coluna
+            ]
         )
     ):
+        if (
+            demonstracao == "DRE"
+            and layout.codigo != LAYOUT_PADRAO
+        ):
+            return _linha(
+                "AV",
+                f"Base AV {demonstracao}",
+                "INFO",
+                (
+                    "Análise vertical da DRE não aplicada: "
+                    "a conta-base 3.01 é ausente ou nula "
+                    "neste layout setorial."
+                ),
+                ano,
+            )
+
         return _linha(
             "AV",
             f"Base AV {demonstracao}",
             "BLOQUEIO",
-            f"Conta-base {conta_base} não pôde ser validada.",
+            (
+                f"Conta-base {conta_base} "
+                "não pôde ser validada."
+            ),
             ano,
         )
 
     valor = float(
-        linha_base.iloc[0][coluna]
+        linha_base.iloc[0][
+            coluna
+        ]
     )
 
-    if abs(valor - 100.0) <= 1e-9:
+    if (
+        abs(
+            valor
+            - 100.0
+        )
+        <= 1e-9
+    ):
         return _linha(
             "AV",
             f"Base AV {demonstracao}",
             "OK",
-            f"Conta-base {conta_base} = 100%.",
+            (
+                f"Conta-base {conta_base} = 100%."
+            ),
             ano,
         )
 
@@ -391,7 +646,10 @@ def _validar_av(
         "AV",
         f"Base AV {demonstracao}",
         "BLOQUEIO",
-        f"Conta-base {conta_base} = {valor:.12f}%, esperado 100%.",
+        (
+            f"Conta-base {conta_base} = "
+            f"{valor:.12f}%, esperado 100%."
+        ),
         ano,
     )
 
@@ -401,7 +659,9 @@ def _validar_ah(
     demonstracao: str,
     anos: list[int],
 ) -> dict[str, object]:
-    ano_base = min(anos)
+    ano_base = min(
+        anos
+    )
 
     ah = calcular_analise_horizontal(
         cd_cvm,
@@ -420,7 +680,9 @@ def _validar_ah(
         )
 
     valores_base = pd.to_numeric(
-        ah[ano_base],
+        ah[
+            ano_base
+        ],
         errors="coerce",
     )
 
@@ -446,22 +708,37 @@ def _validar_ah(
     )
 
     ok_indice = bool(
-        ((indice - 100.0).abs() <= 1e-9)
+        (
+            (
+                indice
+                - 100.0
+            )
+            .abs()
+            <= 1e-9
+        )
         .all()
     )
 
     ok_variacao = bool(
-        (variacao.abs() <= 1e-9)
+        (
+            variacao
+            .abs()
+            <= 1e-9
+        )
         .all()
     )
 
-    if ok_indice and ok_variacao:
+    if (
+        ok_indice
+        and ok_variacao
+    ):
         return _linha(
             "AH",
             f"Ano-base AH {demonstracao}",
             "OK",
             (
-                f"{int(mascara.sum())} contas com base não zero: "
+                f"{int(mascara.sum())} contas "
+                "com base não zero: "
                 "índice=100 e variação=0."
             ),
             ano_base,
@@ -471,7 +748,10 @@ def _validar_ah(
         "AH",
         f"Ano-base AH {demonstracao}",
         "BLOQUEIO",
-        "Existem contas com AH do ano-base diferente de 100/0.",
+        (
+            "Existem contas com AH do ano-base "
+            "diferente de 100/0."
+        ),
         ano_base,
     )
 
@@ -480,12 +760,19 @@ def _validar_auxiliar(
     cd_cvm: str,
     primeiro_ano: int,
 ) -> dict[str, object]:
-    if primeiro_ano != 2023:
+    if (
+        primeiro_ano
+        != 2023
+    ):
         return _linha(
             "Médias",
             "Ano auxiliar",
             "INFO",
-            "A seleção não inicia em 2023; o ano anterior será obtido da base principal quando disponível.",
+            (
+                "A seleção não inicia em 2023; "
+                "o ano anterior será obtido da "
+                "base principal quando disponível."
+            ),
             primeiro_ano,
         )
 
@@ -494,7 +781,10 @@ def _validar_auxiliar(
             "Médias",
             "Ano auxiliar 2022",
             "ALERTA",
-            "Arquivo saldos_auxiliares_2022.parquet ausente.",
+            (
+                "Arquivo "
+                "saldos_auxiliares_2022.parquet ausente."
+            ),
             2022,
         )
 
@@ -502,55 +792,100 @@ def _validar_auxiliar(
         ARQUIVO_AUXILIAR
     )
 
-    cd_cvm = _normalizar_cd_cvm(
-        cd_cvm
+    cd_cvm = (
+        _normalizar_cd_cvm(
+            cd_cvm
+        )
     )
 
     empresa = d[
         d["CD_CVM"]
         .astype(str)
         .str.zfill(6)
-        .eq(cd_cvm)
-    ]
+        .eq(
+            cd_cvm
+        )
+    ].copy()
 
     possui_at = bool(
         (
-            (empresa["DEMONSTRACAO"] == "BPA")
+            (
+                empresa[
+                    "DEMONSTRACAO"
+                ]
+                == "BPA"
+            )
             & (
-                empresa["CD_CONTA"]
+                empresa[
+                    "CD_CONTA"
+                ]
                 .astype(str)
+                .str.strip()
                 .eq("1")
             )
-        ).any()
+        )
+        .any()
+    )
+
+    descricao_pl = (
+        empresa["DS_CONTA"]
+        .map(
+            normalizar_descricao
+        )
+        if (
+            "DS_CONTA"
+            in empresa.columns
+        )
+        else pd.Series(
+            dtype=str
+        )
     )
 
     possui_pl = bool(
         (
-            (empresa["DEMONSTRACAO"] == "BPP")
-            & (
-                empresa["CD_CONTA"]
-                .astype(str)
-                .eq("2.03")
+            (
+                empresa[
+                    "DEMONSTRACAO"
+                ]
+                == "BPP"
             )
-        ).any()
+            & (
+                descricao_pl.eq(
+                    normalizar_descricao(
+                        "Patrimônio Líquido Consolidado"
+                    )
+                )
+            )
+        )
+        .any()
     )
 
-    if possui_at and possui_pl:
+    if (
+        possui_at
+        and possui_pl
+    ):
         return _linha(
             "Médias",
             "Ano auxiliar 2022",
             "OK",
-            "Ativo Total e Patrimônio Líquido de 2022 disponíveis.",
+            (
+                "Ativo Total e Patrimônio Líquido "
+                "Consolidado de 2022 disponíveis."
+            ),
             2022,
         )
 
     faltantes = []
 
     if not possui_at:
-        faltantes.append("Ativo Total")
+        faltantes.append(
+            "Ativo Total"
+        )
 
     if not possui_pl:
-        faltantes.append("Patrimônio Líquido")
+        faltantes.append(
+            "Patrimônio Líquido Consolidado"
+        )
 
     return _linha(
         "Médias",
@@ -558,8 +893,11 @@ def _validar_auxiliar(
         "ALERTA",
         (
             "Saldo auxiliar ausente: "
-            + ", ".join(faltantes)
-            + ". GA/ROA/ROE de 2023 podem ficar N/D."
+            + ", ".join(
+                faltantes
+            )
+            + ". Indicadores que usam médias "
+            "de 2022/2023 podem ficar N/D."
         ),
         2022,
     )
@@ -576,24 +914,38 @@ def _validar_indicadores(
 
     saida = []
 
-    esperados = len(FORMULAS)
+    esperados = len(
+        FORMULAS
+    )
 
     for ano in anos:
         d = base[
-            base["ANO"].eq(ano)
-        ]
+            base["ANO"]
+            .eq(
+                ano
+            )
+        ].copy()
 
         qtd = int(
-            d["INDICADOR"].nunique()
+            d[
+                "INDICADOR"
+            ]
+            .nunique()
         )
 
-        if qtd == esperados:
+        if (
+            qtd
+            == esperados
+        ):
             saida.append(
                 _linha(
                     "Indicadores",
                     "Quantidade de indicadores",
                     "OK",
-                    f"{qtd} indicadores calculados/representados.",
+                    (
+                        f"{qtd} indicadores "
+                        "calculados/representados."
+                    ),
                     ano,
                 )
             )
@@ -603,14 +955,63 @@ def _validar_indicadores(
                     "Indicadores",
                     "Quantidade de indicadores",
                     "BLOQUEIO",
-                    f"{qtd} indicadores; esperado {esperados}.",
+                    (
+                        f"{qtd} indicadores; "
+                        f"esperado {esperados}."
+                    ),
                     ano,
                 )
             )
 
-        nd = d[
-            d["VALOR"].isna()
-        ]["INDICADOR"].tolist()
+        if (
+            "APLICABILIDADE"
+            in d.columns
+        ):
+            na = (
+                d[
+                    d[
+                        "APLICABILIDADE"
+                    ]
+                    .eq(
+                        "NAO_APLICAVEL"
+                    )
+                ][
+                    "INDICADOR"
+                ]
+                .tolist()
+            )
+
+            nd = (
+                d[
+                    d[
+                        "APLICABILIDADE"
+                    ]
+                    .eq(
+                        "APLICAVEL"
+                    )
+                    & d[
+                        "VALOR"
+                    ]
+                    .isna()
+                ][
+                    "INDICADOR"
+                ]
+                .tolist()
+            )
+        else:
+            na = []
+
+            nd = (
+                d[
+                    d[
+                        "VALOR"
+                    ]
+                    .isna()
+                ][
+                    "INDICADOR"
+                ]
+                .tolist()
+            )
 
         if nd:
             saida.append(
@@ -618,7 +1019,29 @@ def _validar_indicadores(
                     "Indicadores",
                     "Cobertura dos indicadores",
                     "ALERTA",
-                    "N/D: " + ", ".join(nd),
+                    (
+                        "N/D entre indicadores "
+                        "aplicáveis: "
+                        + ", ".join(
+                            nd
+                        )
+                    ),
+                    ano,
+                )
+            )
+        elif na:
+            saida.append(
+                _linha(
+                    "Indicadores",
+                    "Cobertura dos indicadores",
+                    "INFO",
+                    (
+                        "N/A por metodologia do "
+                        "layout setorial: "
+                        + ", ".join(
+                            na
+                        )
+                    ),
                     ano,
                 )
             )
@@ -628,7 +1051,11 @@ def _validar_indicadores(
                     "Indicadores",
                     "Cobertura dos indicadores",
                     "OK",
-                    "Todos os indicadores possuem resultado numérico.",
+                    (
+                        "Todos os indicadores "
+                        "aplicáveis possuem "
+                        "resultado numérico."
+                    ),
                     ano,
                 )
             )
@@ -639,21 +1066,55 @@ def _validar_indicadores(
     )
 
     for _, row in dupont.iterrows():
-        ano = int(row["ANO"])
-        status_dupont = str(row["STATUS"])
+        ano = int(
+            row[
+                "ANO"
+            ]
+        )
 
-        if status_dupont == "OK":
+        status_dupont = str(
+            row[
+                "STATUS"
+            ]
+        )
+
+        if (
+            status_dupont
+            == "OK"
+        ):
             status = "OK"
+
             detalhe = (
                 f"ROA={float(row['ROA']):.12f}; "
                 f"GA×RSV={float(row['GA_X_RSV']):.12f}; "
                 f"diferença={float(row['DIFERENCA']):.12g}."
             )
-        elif status_dupont == "N/D":
+
+        elif (
+            status_dupont
+            == "N/A"
+        ):
             status = "INFO"
-            detalhe = "Validação DuPont não aplicável por falta de dados."
+
+            detalhe = (
+                "Validação DuPont não aplicável "
+                "ao layout setorial."
+            )
+
+        elif (
+            status_dupont
+            == "N/D"
+        ):
+            status = "INFO"
+
+            detalhe = (
+                "Validação DuPont não aplicável "
+                "por falta de dados."
+            )
+
         else:
             status = "BLOQUEIO"
+
             detalhe = (
                 f"ROA={row['ROA']}; "
                 f"GA×RSV={row['GA_X_RSV']}; "
@@ -677,8 +1138,10 @@ def validar_empresa(
     cd_cvm: str,
     anos: list[int] | None = None,
 ) -> pd.DataFrame:
-    cd_cvm = _normalizar_cd_cvm(
-        cd_cvm
+    cd_cvm = (
+        _normalizar_cd_cvm(
+            cd_cvm
+        )
     )
 
     disponiveis = anos_disponiveis(
@@ -686,17 +1149,25 @@ def validar_empresa(
     )
 
     if anos is None:
-        anos_usados = disponiveis
+        anos_usados = (
+            disponiveis
+        )
     else:
         anos_usados = sorted(
-            int(ano)
+            int(
+                ano
+            )
             for ano in anos
-            if int(ano) in disponiveis
+            if int(
+                ano
+            )
+            in disponiveis
         )
 
     if not anos_usados:
         raise ValueError(
-            f"Nenhum exercício disponível para {cd_cvm}."
+            "Nenhum exercício disponível "
+            f"para {cd_cvm}."
         )
 
     linhas = []
@@ -704,7 +1175,9 @@ def validar_empresa(
     linhas.append(
         _validar_auxiliar(
             cd_cvm,
-            min(anos_usados),
+            min(
+                anos_usados
+            ),
         )
     )
 
@@ -716,13 +1189,47 @@ def validar_empresa(
             "BPP",
             "DRE",
         ]:
-            d = carregar_demonstracao(
+            demonstracoes[
+                dem
+            ] = carregar_demonstracao(
                 cd_cvm,
                 ano,
                 dem,
             )
 
-            demonstracoes[dem] = d
+        bpa = (
+            demonstracoes[
+                "BPA"
+            ]
+        )
+
+        bpp = (
+            demonstracoes[
+                "BPP"
+            ]
+        )
+
+        dre = (
+            demonstracoes[
+                "DRE"
+            ]
+        )
+
+        layout = detectar_layout(
+            bpp,
+            dre,
+        )
+
+        for dem in [
+            "BPA",
+            "BPP",
+            "DRE",
+        ]:
+            d = (
+                demonstracoes[
+                    dem
+                ]
+            )
 
             if d.empty:
                 linhas.append(
@@ -730,7 +1237,10 @@ def validar_empresa(
                         "Integridade",
                         f"Existência {dem}",
                         "BLOQUEIO",
-                        "Demonstração não encontrada.",
+                        (
+                            "Demonstração "
+                            "não encontrada."
+                        ),
                         ano,
                     )
                 )
@@ -741,7 +1251,10 @@ def validar_empresa(
                     "Integridade",
                     f"Existência {dem}",
                     "OK",
-                    f"{len(d)} contas recuperadas.",
+                    (
+                        f"{len(d)} contas "
+                        "recuperadas."
+                    ),
                     ano,
                 )
             )
@@ -767,6 +1280,7 @@ def validar_empresa(
                     dem,
                     d,
                     ano,
+                    layout,
                 )
             )
 
@@ -775,17 +1289,12 @@ def validar_empresa(
                     cd_cvm,
                     dem,
                     ano,
+                    layout,
                 )
             )
 
-        bpa = demonstracoes.get("BPA")
-        bpp = demonstracoes.get("BPP")
-        dre = demonstracoes.get("DRE")
-
         if (
-            bpa is not None
-            and not bpa.empty
-            and bpp is not None
+            not bpa.empty
             and not bpp.empty
         ):
             linhas.append(
@@ -796,14 +1305,12 @@ def validar_empresa(
                 )
             )
 
-        if (
-            dre is not None
-            and not dre.empty
-        ):
+        if not dre.empty:
             linhas.extend(
                 _validar_identidades_dre(
                     dre,
                     ano,
+                    layout.codigo,
                 )
             )
 
@@ -831,12 +1338,18 @@ def validar_empresa(
         linhas
     )
 
-    resultado["ANO"] = (
+    resultado[
+        "ANO"
+    ] = (
         pd.to_numeric(
-            resultado["ANO"],
+            resultado[
+                "ANO"
+            ],
             errors="coerce",
         )
-        .astype("Int64")
+        .astype(
+            "Int64"
+        )
     )
 
     return resultado
@@ -849,18 +1362,26 @@ def status_geral(
         return "BLOQUEIO"
 
     pior = max(
-        validacao["STATUS"].map(
+        validacao[
+            "STATUS"
+        ]
+        .map(
             STATUS_ORDEM
         )
     )
 
     inverso = {
         valor: chave
-        for chave, valor
+        for (
+            chave,
+            valor,
+        )
         in STATUS_ORDEM.items()
     }
 
-    return inverso[pior]
+    return inverso[
+        pior
+    ]
 
 
 def resumo_validacao(
@@ -874,14 +1395,20 @@ def resumo_validacao(
     ]
 
     contagem = (
-        validacao["STATUS"]
+        validacao[
+            "STATUS"
+        ]
         .value_counts()
         .reindex(
             ordem,
             fill_value=0,
         )
-        .rename_axis("STATUS")
-        .reset_index(name="QUANTIDADE")
+        .rename_axis(
+            "STATUS"
+        )
+        .reset_index(
+            name="QUANTIDADE"
+        )
     )
 
     return contagem
@@ -889,11 +1416,23 @@ def resumo_validacao(
 
 def main() -> None:
     cd_cvm = "004170"
-    anos = [2023, 2024, 2025]
+    anos = [
+        2023,
+        2024,
+        2025,
+    ]
 
-    print("=" * 70)
-    print("SISTEMA CVM - VALIDACAO")
-    print("=" * 70)
+    print(
+        "=" * 70
+    )
+
+    print(
+        "SISTEMA CVM - VALIDACAO"
+    )
+
+    print(
+        "=" * 70
+    )
 
     validacao = validar_empresa(
         cd_cvm,
@@ -901,14 +1440,17 @@ def main() -> None:
     )
 
     print()
-    print("EMPRESA: VALE S.A.")
     print(
-        f"STATUS GERAL: "
-        f"{status_geral(validacao)}"
+        validacao.to_string(
+            index=False
+        )
     )
 
     print()
-    print("RESUMO:")
+    print(
+        "RESUMO"
+    )
+
     print(
         resumo_validacao(
             validacao
@@ -917,22 +1459,16 @@ def main() -> None:
         )
     )
 
-    problemas = validacao[
-        validacao["STATUS"].isin(
-            ["ALERTA", "BLOQUEIO"]
-        )
-    ]
-
     print()
-    print("ALERTAS / BLOQUEIOS:")
-    if problemas.empty:
-        print("Nenhum.")
-    else:
-        print(
-            problemas.to_string(
-                index=False
-            )
+    print(
+        "STATUS GERAL:"
+    )
+
+    print(
+        status_geral(
+            validacao
         )
+    )
 
 
 if __name__ == "__main__":
