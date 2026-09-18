@@ -46,6 +46,7 @@ from src.graficos import (
 
 from src.validacao import (
     validar_empresa,
+    status_geral,
 )
 
 from src.exportacao import (
@@ -610,6 +611,9 @@ def exibir_cards_financeiros_setoriais(
                     )
                     else status
                 )
+                continue
+
+            if ano_base == ano_recente:
                 continue
 
             if codigo in {
@@ -1630,6 +1634,7 @@ def exibir_cards_dashboard(
     cards,
     codigos,
     ano_base,
+    ano_recente=None,
 ):
     if cards.empty:
         return
@@ -1685,7 +1690,10 @@ def exibir_cards_dashboard(
                 st.caption(
                     "Não aplicável ao layout setorial."
                 )
-            else:
+            elif (
+                ano_recente is None
+                or ano_base != ano_recente
+            ):
                 st.caption(
                     f"vs. {ano_base}: "
                     f"{linha['DELTA_FMT']}"
@@ -2176,8 +2184,15 @@ if empresa_selecionada is not None:
                 else []
             )
 
+            financeira_periodo_insuficiente = (
+                "FINANCEIRA" in layouts_detectados
+                and len(anos_tuple) < 2
+            )
+
             relatorio = (
-                carregar_relatorio(
+                None
+                if financeira_periodo_insuficiente
+                else carregar_relatorio(
                     cd_cvm,
                     nome,
                     anos_tuple,
@@ -2221,7 +2236,11 @@ if empresa_selecionada is not None:
 
         st.stop()
 
-
+    status_validacao_atual = (
+        relatorio["STATUS_VALIDACAO"]
+        if isinstance(relatorio, dict)
+        else status_geral(validacao)
+    )
 
     # ========================================================
     # LAYOUT CONTÁBIL
@@ -2339,7 +2358,9 @@ if empresa_selecionada is not None:
     try:
 
         arquivo_excel = (
-            gerar_excel_sistema(
+            None
+            if financeira_periodo_insuficiente
+            else gerar_excel_sistema(
                 identificacao=identificacao_exportacao,
                 bp_ativo=bpa,
                 bp_passivo=bpp,
@@ -2357,7 +2378,9 @@ if empresa_selecionada is not None:
         )
 
         nome_arquivo_excel = (
-            nome_arquivo_exportacao(
+            None
+            if financeira_periodo_insuficiente
+            else nome_arquivo_exportacao(
                 identificacao_exportacao,
                 anos=list(
                     anos_tuple
@@ -2422,7 +2445,7 @@ if empresa_selecionada is not None:
 
         st.caption(
             "O arquivo inclui Identificação, BP Ativo, BP Passivo, "
-            "DRE, os 12 Indicadores, Relatório e Validação/Auditoria. "
+            "DRE, os indicadores aplicáveis, Relatório e Validação/Auditoria. "
             "A exportação utiliza os mesmos resultados exibidos no "
             "sistema e não recalcula os indicadores."
         )
@@ -2441,6 +2464,13 @@ if empresa_selecionada is not None:
                 st.exception(
                     erro_exportacao
                 )
+
+        elif financeira_periodo_insuficiente:
+
+            st.warning(
+                "A exportação completa exige pelo menos "
+                "dois exercícios para o layout FINANCEIRA."
+            )
 
 
     # ========================================================
@@ -2527,11 +2557,8 @@ if empresa_selecionada is not None:
 
             st.metric(
                 "Validação",
-                relatorio[
-                    "STATUS_VALIDACAO"
-                ],
+                status_validacao_atual,
             )
-
 
         st.divider()
 
@@ -2647,6 +2674,7 @@ if empresa_selecionada is not None:
                     "ROE",
                 ],
                 ano_base,
+                ano_recente,
             )
 
             exibir_grafico_dashboard(
@@ -2805,11 +2833,19 @@ if empresa_selecionada is not None:
             "## Leitura rápida"
         )
 
-        st.markdown(
-            relatorio[
-                "RESUMO_EXECUTIVO"
-            ]
-        )
+        if financeira_periodo_insuficiente:
+            st.info(
+                "Período insuficiente para análise temporal. "
+                "Os dados e indicadores pontuais permanecem disponíveis, "
+                "mas não é possível produzir uma síntese comparativa "
+                "com apenas um exercício."
+            )
+        else:
+            st.markdown(
+                relatorio[
+                    "RESUMO_EXECUTIVO"
+                ]
+            )
 
         st.caption(
             "Para interpretação detalhada, consulte "
@@ -3494,608 +3530,617 @@ if empresa_selecionada is not None:
             "Relatório de Análise Financeira"
         )
 
-        st.caption(
-            "Interpretação automática dos três exercícios "
-            "a partir dos resultados oficiais dos "
-            "indicadores e das verificações de integridade."
-        )
-
-        status_relatorio = (
-            relatorio[
-                "STATUS_VALIDACAO"
-            ]
-        )
-
-
-        # ====================================================
-        # CABEÇALHO
-        # ====================================================
-
-        r1, r2, r3 = (
-            st.columns(
-                3
-            )
-        )
-
-        with r1:
-
-            st.metric(
-                "Empresa",
-                nome,
-            )
-
-        with r2:
-
-            st.metric(
-                "Período",
-                (
-                    f"{min(anos_analise)}"
-                    f"–"
-                    f"{max(anos_analise)}"
-                ),
-            )
-
-        with r3:
-
-            st.metric(
-                "Validação",
-                status_relatorio,
-            )
-
-
-        if status_relatorio == "OK":
-
-            st.success(
-                "Validação concluída sem "
-                "alertas ou bloqueios."
-            )
-
-        elif status_relatorio == "INFO":
-
-            st.info(
-                "Validação concluída com "
-                "informações técnicas adicionais."
-            )
-
-        elif status_relatorio == "ALERTA":
-
+        if financeira_periodo_insuficiente:
             st.warning(
-                "O relatório contém ressalvas "
-                "de validação."
+                "Período insuficiente para gerar o relatório "
+                "financeiro. Selecione uma companhia com pelo "
+                "menos dois exercícios disponíveis."
             )
 
         else:
 
-            st.error(
-                "A interpretação conclusiva está "
-                "suspensa por bloqueio de integridade."
+            st.caption(
+                "Interpretação automática dos três exercícios "
+                "a partir dos resultados oficiais dos "
+                "indicadores e das verificações de integridade."
             )
 
-
-        # ====================================================
-        # RESUMO
-        # ====================================================
-
-        st.markdown(
-            "## Resumo executivo"
-        )
-
-        st.markdown(
-            relatorio[
-                "RESUMO_EXECUTIVO"
-            ]
-        )
-
-        st.divider()
-
-
-        # ====================================================
-        # PRINCIPAIS MUDANÇAS
-        # ====================================================
-
-        st.markdown(
-            "## Principais mudanças do período"
-        )
-
-        principais = (
-            relatorio[
-                "PRINCIPAIS_MUDANCAS"
-            ]
-        )
-
-        if principais:
-
-            colunas_mudancas = (
-                st.columns(
-                    len(
-                        principais
-                    )
-                )
-            )
-
-            for indice, item in enumerate(
-                principais
-            ):
-
-                with colunas_mudancas[
-                    indice
-                ]:
-
-                    st.markdown(
-                        f"""
-**Mudança {indice + 1}**
-
-{item}
-                        """
-                    )
-
-        else:
-
-            st.info(
-                "Não há mudanças classificadas "
-                "para exibição."
-            )
-
-        st.divider()
-
-
-        # ====================================================
-        # EVOLUÇÃO
-        # ====================================================
-
-        st.markdown(
-            "## Evolução dos indicadores"
-        )
-
-        analise_relatorio = (
-            relatorio[
-                "ANALISE_INDICADORES"
-            ]
-        )
-
-        tabela_relatorio = (
-            montar_tabela_relatorio(
-                analise_relatorio,
-                anos_analise,
-            )
-        )
-
-        if not tabela_relatorio.empty:
-
-            st.dataframe(
-                tabela_relatorio,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        st.caption(
-            "Para indicadores percentuais, a variação "
-            "base → recente é apresentada em pontos "
-            "percentuais. A trajetória considera os "
-            "movimentos entre os três exercícios."
-        )
-
-        st.divider()
-
-
-        # ====================================================
-        # ANÁLISE POR GRUPO
-        # ====================================================
-
-        st.markdown(
-            "## Análise por grupo"
-        )
-
-        sinteses = (
-            relatorio[
-                "SINTESES_GRUPOS"
-            ]
-        )
-
-        if (
-            sinteses
-            and relatorio_financeiro_ativo
-        ):
-
-            grupos_financeiros = list(
-                sinteses.keys()
-            )
-
-            abas_grupos = st.tabs(
-                grupos_financeiros
-            )
-
-            for aba_grupo, grupo in zip(
-                abas_grupos,
-                grupos_financeiros,
-            ):
-                with aba_grupo:
-                    st.markdown(
-                        sinteses.get(
-                            grupo,
-                            "N/D",
-                        )
-                    )
-
-        if (
-            sinteses
-            and not relatorio_financeiro_ativo
-        ):
-
-            grupo_estrutura, grupo_liquidez, grupo_desempenho = (
-                st.tabs(
-                    [
-                        "Estrutura de Capital",
-                        "Liquidez",
-                        "Desempenho",
-                    ]
-                )
-            )
-
-            with grupo_estrutura:
-
-                st.markdown(
-                    sinteses.get(
-                        "Estrutura de Capital",
-                        "N/D",
-                    )
-                )
-
-            with grupo_liquidez:
-
-                st.markdown(
-                    sinteses.get(
-                        "Liquidez",
-                        "N/D",
-                    )
-                )
-
-            with grupo_desempenho:
-
-                st.markdown(
-                    sinteses.get(
-                        "Lucratividade/Desempenho",
-                        "N/D",
-                    )
-                )
-
-        elif not relatorio_financeiro_ativo:
-
-            st.warning(
-                "As sínteses por grupo estão "
-                "suspensas devido à validação."
-            )
-
-        st.divider()
-
-
-        # ====================================================
-        # ANÁLISE INDIVIDUAL
-        # ====================================================
-
-        st.markdown(
-            "## Análise individual dos indicadores"
-        )
-
-        if not analise_relatorio.empty:
-
-            grupos_analise = (
-                list(
-                    sinteses.keys()
-                )
-                if relatorio_financeiro_ativo
-                else [
-                    "Estrutura de Capital",
-                    "Liquidez",
-                    "Lucratividade/Desempenho",
+            status_relatorio = (
+                relatorio[
+                    "STATUS_VALIDACAO"
                 ]
             )
 
-            for grupo in grupos_analise:
 
-                st.markdown(
-                    f"### {grupo}"
-                )
+            # ====================================================
+            # CABEÇALHO
+            # ====================================================
 
-                parte = (
-                    analise_relatorio.loc[
-                        analise_relatorio[
-                            "GRUPO"
-                        ] == grupo
-                    ]
-                )
-
-                for _, linha in (
-                    parte.iterrows()
-                ):
-
-                    codigo = (
-                        linha[
-                            "INDICADOR"
-                        ]
-                    )
-
-                    linha_na = (
-                        str(
-                            linha.get(
-                                "APLICABILIDADE",
-                                "APLICAVEL",
-                            )
-                        )
-                        == "NAO_APLICAVEL"
-                    )
-
-                    titulo_expander = (
-                        f"{codigo} — "
-                        f"{linha['NOME']} | "
-                        f"{linha['TRAJETORIA']}"
-                    )
-
-                    if linha_na:
-                        with st.expander(
-                            titulo_expander
-                        ):
-                            st.info(
-                                linha["INTERPRETACAO"]
-                            )
-                        continue
-
-                    with st.expander(
-                        titulo_expander
-                    ):
-
-                        e1, e2, e3 = (
-                            st.columns(
-                                3
-                            )
-                        )
-
-                        with e1:
-
-                            st.metric(
-                                str(
-                                    min(
-                                        anos_analise
-                                    )
-                                ),
-                                formatar_indicador(
-                                    codigo,
-                                    linha[
-                                        "BASE"
-                                    ],
-                                ),
-                            )
-
-                        with e2:
-
-                            if len(
-                                anos_analise
-                            ) >= 3:
-
-                                st.metric(
-                                    str(
-                                        sorted(
-                                            anos_analise
-                                        )[1]
-                                    ),
-                                    formatar_indicador(
-                                        codigo,
-                                        linha[
-                                            "INTERMEDIARIO"
-                                        ],
-                                    ),
-                                )
-
-                        with e3:
-
-                            st.metric(
-                                str(
-                                    max(
-                                        anos_analise
-                                    )
-                                ),
-                                formatar_indicador(
-                                    codigo,
-                                    linha[
-                                        "RECENTE"
-                                    ],
-                                ),
-                            )
-
-                        st.markdown(
-                            f"**Variação base → recente:** "
-                            f"{linha['DELTA']}"
-                        )
-
-                        st.markdown(
-                            f"**Trajetória:** "
-                            f"{linha['TRAJETORIA']}"
-                        )
-
-                        st.markdown(
-                            linha[
-                                "INTERPRETACAO"
-                            ]
-                        )
-
-        st.divider()
-
-
-        # ====================================================
-        # DUPONT
-        # ====================================================
-
-        if not relatorio_financeiro_ativo:
-            st.markdown(
-                "## Decomposição DuPont"
-            )
-
-        dupont_relatorio = (
-            relatorio[
-                "DUPONT"
-            ]
-        )
-
-        if not dupont_relatorio.empty:
-
-            dupont_exibicao = (
-                dupont_relatorio.copy()
-            )
-
-            for coluna in [
-                "GA",
-                "RSV",
-                "ROA",
-                "GA_X_RSV",
-            ]:
-
-                if coluna in (
-                    dupont_exibicao.columns
-                ):
-
-                    indicador_fmt = (
-                        "GA"
-                        if coluna == "GA"
-                        else (
-                            "ROA"
-                            if coluna
-                            in {
-                                "ROA",
-                                "GA_X_RSV",
-                            }
-                            else "RSV"
-                        )
-                    )
-
-                    dupont_exibicao[
-                        coluna
-                    ] = [
-                        formatar_indicador(
-                            indicador_fmt,
-                            valor,
-                        )
-                        for valor in (
-                            dupont_exibicao[
-                                coluna
-                            ]
-                        )
-                    ]
-
-            dupont_exibicao = (
-                dupont_exibicao.rename(
-                    columns={
-                        "GA_X_RSV": (
-                            "GA × RSV"
-                        ),
-                    }
+            r1, r2, r3 = (
+                st.columns(
+                    3
                 )
             )
 
-            st.dataframe(
-                dupont_exibicao[
-                    [
-                        "ANO",
-                        "GA",
-                        "RSV",
-                        "ROA",
-                        "GA × RSV",
-                        "STATUS",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
+            with r1:
 
-            st.caption(
-                "ROA = Giro do Ativo × "
-                "Retorno sobre Vendas. "
-                "A validação utiliza valores "
-                "não arredondados."
-            )
-
-        st.divider()
-
-
-        # ====================================================
-        # PONTOS DE ATENÇÃO
-        # ====================================================
-
-        st.markdown(
-            "## Pontos de atenção"
-        )
-
-        pontos = (
-            relatorio[
-                "PONTOS_ATENCAO"
-            ]
-        )
-
-        for ponto in pontos:
-
-            if str(
-                ponto
-            ).startswith(
-                "BLOQUEIO"
-            ):
-
-                st.error(
-                    ponto
+                st.metric(
+                    "Empresa",
+                    nome,
                 )
 
-            elif str(
-                ponto
-            ).startswith(
-                "ALERTA"
-            ):
+            with r2:
 
-                st.warning(
-                    ponto
+                st.metric(
+                    "Período",
+                    (
+                        f"{min(anos_analise)}"
+                        f"–"
+                        f"{max(anos_analise)}"
+                    ),
                 )
 
-            elif (
-                "Nenhum alerta"
-                in str(
-                    ponto
+            with r3:
+
+                st.metric(
+                    "Validação",
+                    status_relatorio,
                 )
-            ):
+
+
+            if status_relatorio == "OK":
 
                 st.success(
-                    ponto
+                    "Validação concluída sem "
+                    "alertas ou bloqueios."
+                )
+
+            elif status_relatorio == "INFO":
+
+                st.info(
+                    "Validação concluída com "
+                    "informações técnicas adicionais."
+                )
+
+            elif status_relatorio == "ALERTA":
+
+                st.warning(
+                    "O relatório contém ressalvas "
+                    "de validação."
                 )
 
             else:
 
-                st.info(
-                    ponto
+                st.error(
+                    "A interpretação conclusiva está "
+                    "suspensa por bloqueio de integridade."
                 )
 
-        st.divider()
+
+            # ====================================================
+            # RESUMO
+            # ====================================================
+
+            st.markdown(
+                "## Resumo executivo"
+            )
+
+            st.markdown(
+                relatorio[
+                    "RESUMO_EXECUTIVO"
+                ]
+            )
+
+            st.divider()
 
 
-        # ====================================================
-        # CONCLUSÃO
-        # ====================================================
+            # ====================================================
+            # PRINCIPAIS MUDANÇAS
+            # ====================================================
 
-        st.markdown(
-            "## Conclusão"
-        )
+            st.markdown(
+                "## Principais mudanças do período"
+            )
 
-        st.markdown(
-            relatorio[
-                "CONCLUSAO"
-            ]
-        )
+            principais = (
+                relatorio[
+                    "PRINCIPAIS_MUDANCAS"
+                ]
+            )
 
-        st.divider()
+            if principais:
+
+                colunas_mudancas = (
+                    st.columns(
+                        len(
+                            principais
+                        )
+                    )
+                )
+
+                for indice, item in enumerate(
+                    principais
+                ):
+
+                    with colunas_mudancas[
+                        indice
+                    ]:
+
+                        st.markdown(
+                            f"""
+**Mudança {indice + 1}**
+
+{item}
+                            """
+                        )
+
+            else:
+
+                st.info(
+                    "Não há mudanças classificadas "
+                    "para exibição."
+                )
+
+            st.divider()
 
 
-        if not relatorio_financeiro_ativo:
-            with st.expander(
-                "Metodologia do relatório"
+            # ====================================================
+            # EVOLUÇÃO
+            # ====================================================
+
+            st.markdown(
+                "## Evolução dos indicadores"
+            )
+
+            analise_relatorio = (
+                relatorio[
+                    "ANALISE_INDICADORES"
+                ]
+            )
+
+            tabela_relatorio = (
+                montar_tabela_relatorio(
+                    analise_relatorio,
+                    anos_analise,
+                )
+            )
+
+            if not tabela_relatorio.empty:
+
+                st.dataframe(
+                    tabela_relatorio,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            st.caption(
+                "Para indicadores percentuais, a variação "
+                "base → recente é apresentada em pontos "
+                "percentuais. A trajetória considera os "
+                "movimentos entre os três exercícios."
+            )
+
+            st.divider()
+
+
+            # ====================================================
+            # ANÁLISE POR GRUPO
+            # ====================================================
+
+            st.markdown(
+                "## Análise por grupo"
+            )
+
+            sinteses = (
+                relatorio[
+                    "SINTESES_GRUPOS"
+                ]
+            )
+
+            if (
+                sinteses
+                and relatorio_financeiro_ativo
             ):
 
+                grupos_financeiros = list(
+                    sinteses.keys()
+                )
+
+                abas_grupos = st.tabs(
+                    grupos_financeiros
+                )
+
+                for aba_grupo, grupo in zip(
+                    abas_grupos,
+                    grupos_financeiros,
+                ):
+                    with aba_grupo:
+                        st.markdown(
+                            sinteses.get(
+                                grupo,
+                                "N/D",
+                            )
+                        )
+
+            if (
+                sinteses
+                and not relatorio_financeiro_ativo
+            ):
+
+                grupo_estrutura, grupo_liquidez, grupo_desempenho = (
+                    st.tabs(
+                        [
+                            "Estrutura de Capital",
+                            "Liquidez",
+                            "Desempenho",
+                        ]
+                    )
+                )
+
+                with grupo_estrutura:
+
+                    st.markdown(
+                        sinteses.get(
+                            "Estrutura de Capital",
+                            "N/D",
+                        )
+                    )
+
+                with grupo_liquidez:
+
+                    st.markdown(
+                        sinteses.get(
+                            "Liquidez",
+                            "N/D",
+                        )
+                    )
+
+                with grupo_desempenho:
+
+                    st.markdown(
+                        sinteses.get(
+                            "Lucratividade/Desempenho",
+                            "N/D",
+                        )
+                    )
+
+            elif not relatorio_financeiro_ativo:
+
+                st.warning(
+                    "As sínteses por grupo estão "
+                    "suspensas devido à validação."
+                )
+
+            st.divider()
+
+
+            # ====================================================
+            # ANÁLISE INDIVIDUAL
+            # ====================================================
+
+            st.markdown(
+                "## Análise individual dos indicadores"
+            )
+
+            if not analise_relatorio.empty:
+
+                grupos_analise = (
+                    list(
+                        sinteses.keys()
+                    )
+                    if relatorio_financeiro_ativo
+                    else [
+                        "Estrutura de Capital",
+                        "Liquidez",
+                        "Lucratividade/Desempenho",
+                    ]
+                )
+
+                for grupo in grupos_analise:
+
+                    st.markdown(
+                        f"### {grupo}"
+                    )
+
+                    parte = (
+                        analise_relatorio.loc[
+                            analise_relatorio[
+                                "GRUPO"
+                            ] == grupo
+                        ]
+                    )
+
+                    for _, linha in (
+                        parte.iterrows()
+                    ):
+
+                        codigo = (
+                            linha[
+                                "INDICADOR"
+                            ]
+                        )
+
+                        linha_na = (
+                            str(
+                                linha.get(
+                                    "APLICABILIDADE",
+                                    "APLICAVEL",
+                                )
+                            )
+                            == "NAO_APLICAVEL"
+                        )
+
+                        titulo_expander = (
+                            f"{codigo} — "
+                            f"{linha['NOME']} | "
+                            f"{linha['TRAJETORIA']}"
+                        )
+
+                        if linha_na:
+                            with st.expander(
+                                titulo_expander
+                            ):
+                                st.info(
+                                    linha["INTERPRETACAO"]
+                                )
+                            continue
+
+                        with st.expander(
+                            titulo_expander
+                        ):
+
+                            e1, e2, e3 = (
+                                st.columns(
+                                    3
+                                )
+                            )
+
+                            with e1:
+
+                                st.metric(
+                                    str(
+                                        min(
+                                            anos_analise
+                                        )
+                                    ),
+                                    formatar_indicador(
+                                        codigo,
+                                        linha[
+                                            "BASE"
+                                        ],
+                                    ),
+                                )
+
+                            with e2:
+
+                                if len(
+                                    anos_analise
+                                ) >= 3:
+
+                                    st.metric(
+                                        str(
+                                            sorted(
+                                                anos_analise
+                                            )[1]
+                                        ),
+                                        formatar_indicador(
+                                            codigo,
+                                            linha[
+                                                "INTERMEDIARIO"
+                                            ],
+                                        ),
+                                    )
+
+                            with e3:
+
+                                st.metric(
+                                    str(
+                                        max(
+                                            anos_analise
+                                        )
+                                    ),
+                                    formatar_indicador(
+                                        codigo,
+                                        linha[
+                                            "RECENTE"
+                                        ],
+                                    ),
+                                )
+
+                            st.markdown(
+                                f"**Variação base → recente:** "
+                                f"{linha['DELTA']}"
+                            )
+
+                            st.markdown(
+                                f"**Trajetória:** "
+                                f"{linha['TRAJETORIA']}"
+                            )
+
+                            st.markdown(
+                                linha[
+                                    "INTERPRETACAO"
+                                ]
+                            )
+
+            st.divider()
+
+
+            # ====================================================
+            # DUPONT
+            # ====================================================
+
+            if not relatorio_financeiro_ativo:
                 st.markdown(
-                    """
+                    "## Decomposição DuPont"
+                )
+
+            dupont_relatorio = (
+                relatorio[
+                    "DUPONT"
+                ]
+            )
+
+            if not dupont_relatorio.empty:
+
+                dupont_exibicao = (
+                    dupont_relatorio.copy()
+                )
+
+                for coluna in [
+                    "GA",
+                    "RSV",
+                    "ROA",
+                    "GA_X_RSV",
+                ]:
+
+                    if coluna in (
+                        dupont_exibicao.columns
+                    ):
+
+                        indicador_fmt = (
+                            "GA"
+                            if coluna == "GA"
+                            else (
+                                "ROA"
+                                if coluna
+                                in {
+                                    "ROA",
+                                    "GA_X_RSV",
+                                }
+                                else "RSV"
+                            )
+                        )
+
+                        dupont_exibicao[
+                            coluna
+                        ] = [
+                            formatar_indicador(
+                                indicador_fmt,
+                                valor,
+                            )
+                            for valor in (
+                                dupont_exibicao[
+                                    coluna
+                                ]
+                            )
+                        ]
+
+                dupont_exibicao = (
+                    dupont_exibicao.rename(
+                        columns={
+                            "GA_X_RSV": (
+                                "GA × RSV"
+                            ),
+                        }
+                    )
+                )
+
+                st.dataframe(
+                    dupont_exibicao[
+                        [
+                            "ANO",
+                            "GA",
+                            "RSV",
+                            "ROA",
+                            "GA × RSV",
+                            "STATUS",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                st.caption(
+                    "ROA = Giro do Ativo × "
+                    "Retorno sobre Vendas. "
+                    "A validação utiliza valores "
+                    "não arredondados."
+                )
+
+            st.divider()
+
+
+            # ====================================================
+            # PONTOS DE ATENÇÃO
+            # ====================================================
+
+            st.markdown(
+                "## Pontos de atenção"
+            )
+
+            pontos = (
+                relatorio[
+                    "PONTOS_ATENCAO"
+                ]
+            )
+
+            for ponto in pontos:
+
+                if str(
+                    ponto
+                ).startswith(
+                    "BLOQUEIO"
+                ):
+
+                    st.error(
+                        ponto
+                    )
+
+                elif str(
+                    ponto
+                ).startswith(
+                    "ALERTA"
+                ):
+
+                    st.warning(
+                        ponto
+                    )
+
+                elif (
+                    "Nenhum alerta"
+                    in str(
+                        ponto
+                    )
+                ):
+
+                    st.success(
+                        ponto
+                    )
+
+                else:
+
+                    st.info(
+                        ponto
+                    )
+
+            st.divider()
+
+
+            # ====================================================
+            # CONCLUSÃO
+            # ====================================================
+
+            st.markdown(
+                "## Conclusão"
+            )
+
+            st.markdown(
+                relatorio[
+                    "CONCLUSAO"
+                ]
+            )
+
+            st.divider()
+
+
+            if not relatorio_financeiro_ativo:
+                with st.expander(
+                    "Metodologia do relatório"
+                ):
+
+                    st.markdown(
+                        """
 O relatório é gerado por regras determinísticas.
 
 - Utiliza os mesmos 12 indicadores apresentados na aba **Indicadores**.
@@ -4108,8 +4153,8 @@ O relatório é gerado por regras determinísticas.
 - Dados ausentes permanecem `N/D`.
 - Bloqueios de integridade suspendem conclusões financeiras.
 - Não é atribuída pontuação automática de saúde financeira.
-                    """
-                )
+                        """
+                    )
 
 
     # ========================================================
