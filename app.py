@@ -34,6 +34,10 @@ from src.relatorio import (
     gerar_relatorio,
 )
 
+from src.relatorio_financeiro import (
+    gerar_relatorio_financeiro,
+)
+
 from src.graficos import (
     montar_cards_dashboard,
     montar_graficos_dashboard,
@@ -160,6 +164,7 @@ PERCENTUAIS_INDICADORES = {
     "RSV",
     "ROA",
     "ROE",
+    *INDICADORES_FINANCEIROS,
 }
 
 
@@ -973,7 +978,17 @@ def carregar_relatorio(
     cd_cvm,
     nome_empresa,
     anos_tuple,
+    layout_financeiro,
 ):
+
+    if layout_financeiro:
+        return gerar_relatorio_financeiro(
+            cd_cvm=cd_cvm,
+            nome_empresa=nome_empresa,
+            anos=list(
+                anos_tuple
+            ),
+        )
 
     return gerar_relatorio(
         cd_cvm=cd_cvm,
@@ -2153,12 +2168,37 @@ if empresa_selecionada is not None:
                 )
             )
 
+            layouts_detectados = (
+                quadro_inds["LAYOUT"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+                if (
+                    not quadro_inds.empty
+                    and "LAYOUT" in quadro_inds.columns
+                )
+                else []
+            )
+
             relatorio = (
                 carregar_relatorio(
                     cd_cvm,
                     nome,
                     anos_tuple,
+                    "FINANCEIRA" in layouts_detectados,
                 )
+            )
+
+            relatorio_exportacao = (
+                carregar_relatorio(
+                    cd_cvm,
+                    nome,
+                    anos_tuple,
+                    False,
+                )
+                if "FINANCEIRA" in layouts_detectados
+                else relatorio
             )
 
             validacao = (
@@ -2200,19 +2240,6 @@ if empresa_selecionada is not None:
     # ========================================================
     # LAYOUT CONTÁBIL
     # ========================================================
-
-    layouts_detectados = (
-        quadro_inds["LAYOUT"]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-        if (
-            not quadro_inds.empty
-            and "LAYOUT" in quadro_inds.columns
-        )
-        else []
-    )
 
     layout_atual = (
         " / ".join(
@@ -2332,12 +2359,12 @@ if empresa_selecionada is not None:
                 bp_passivo=bpp,
                 dre=dre,
                 indicadores=quadro_inds,
-                relatorio=relatorio,
+                relatorio=relatorio_exportacao,
                 validacao=validacao,
                 anos=list(
                     anos_tuple
                 ),
-                status_validacao=relatorio[
+                status_validacao=relatorio_exportacao[
                     "STATUS_VALIDACAO"
                 ],
             )
@@ -3472,6 +3499,11 @@ if empresa_selecionada is not None:
 
     with abas[5]:
 
+        relatorio_financeiro_ativo = (
+            "FINANCEIRA"
+            in layouts_detectados
+        )
+
         st.subheader(
             "Relatório de Análise Financeira"
         )
@@ -3674,7 +3706,35 @@ if empresa_selecionada is not None:
             ]
         )
 
-        if sinteses:
+        if (
+            sinteses
+            and relatorio_financeiro_ativo
+        ):
+
+            grupos_financeiros = list(
+                sinteses.keys()
+            )
+
+            abas_grupos = st.tabs(
+                grupos_financeiros
+            )
+
+            for aba_grupo, grupo in zip(
+                abas_grupos,
+                grupos_financeiros,
+            ):
+                with aba_grupo:
+                    st.markdown(
+                        sinteses.get(
+                            grupo,
+                            "N/D",
+                        )
+                    )
+
+        if (
+            sinteses
+            and not relatorio_financeiro_ativo
+        ):
 
             grupo_estrutura, grupo_liquidez, grupo_desempenho = (
                 st.tabs(
@@ -3713,7 +3773,7 @@ if empresa_selecionada is not None:
                     )
                 )
 
-        else:
+        elif not relatorio_financeiro_ativo:
 
             st.warning(
                 "As sínteses por grupo estão "
@@ -3733,11 +3793,19 @@ if empresa_selecionada is not None:
 
         if not analise_relatorio.empty:
 
-            for grupo in [
-                "Estrutura de Capital",
-                "Liquidez",
-                "Lucratividade/Desempenho",
-            ]:
+            grupos_analise = (
+                list(
+                    sinteses.keys()
+                )
+                if relatorio_financeiro_ativo
+                else [
+                    "Estrutura de Capital",
+                    "Liquidez",
+                    "Lucratividade/Desempenho",
+                ]
+            )
+
+            for grupo in grupos_analise:
 
                 st.markdown(
                     f"### {grupo}"
@@ -3871,9 +3939,10 @@ if empresa_selecionada is not None:
         # DUPONT
         # ====================================================
 
-        st.markdown(
-            "## Decomposição DuPont"
-        )
+        if not relatorio_financeiro_ativo:
+            st.markdown(
+                "## Decomposição DuPont"
+            )
 
         dupont_relatorio = (
             relatorio[
@@ -4034,12 +4103,13 @@ if empresa_selecionada is not None:
         st.divider()
 
 
-        with st.expander(
-            "Metodologia do relatório"
-        ):
+        if not relatorio_financeiro_ativo:
+            with st.expander(
+                "Metodologia do relatório"
+            ):
 
-            st.markdown(
-                """
+                st.markdown(
+                    """
 O relatório é gerado por regras determinísticas.
 
 - Utiliza os mesmos 12 indicadores apresentados na aba **Indicadores**.
@@ -4052,8 +4122,8 @@ O relatório é gerado por regras determinísticas.
 - Dados ausentes permanecem `N/D`.
 - Bloqueios de integridade suspendem conclusões financeiras.
 - Não é atribuída pontuação automática de saúde financeira.
-                """
-            )
+                    """
+                )
 
 
     # ========================================================
