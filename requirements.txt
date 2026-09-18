@@ -5,5 +5,6 @@ pandas==3.0.5
 plotly==7.1.0
 pyarrow==25.0.1
 requests==2.34.2
+reportlab==4.4.3
 streamlit==1.64.0
 XlsxWriter==3.2.9
