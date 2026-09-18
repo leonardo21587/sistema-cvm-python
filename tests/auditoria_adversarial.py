@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 import traceback
@@ -61,6 +62,31 @@ INDICADORES_ESPERADOS = [
     "ROE",
 ]
 
+INDICADORES_FINANCEIROS_ESPERADOS = [
+    "CAP_CONTABIL",
+    "PF_ATIVO",
+    "CRESC_ATIVO",
+    "CRESC_PL",
+    "CRESC_LL",
+    "RBI_ATIVO_MEDIO",
+    "PRETRIB_ATIVO_MEDIO",
+    "ROA",
+    "ROE",
+]
+
+INDICADORES_INCOMPATIVEIS_FINANCEIRA = {
+    "IPL",
+    "PCT",
+    "CE",
+    "EFSAT",
+    "LG",
+    "LC",
+    "LS",
+    "ICJ",
+    "GA",
+    "RSV",
+}
+
 ABAS_EXPORTACAO = [
     "Identificação",
     "BP Ativo",
@@ -113,11 +139,15 @@ try:
         quadro_indicadores,
         validar_dupont,
     )
+    from src.indicadores_financeiros import (
+        calcular_indicadores_financeiros,
+    )
     from src.validacao import (
         validar_empresa,
         status_geral,
     )
     from src.relatorio import gerar_relatorio
+    from src.relatorio_financeiro import gerar_relatorio_financeiro
     from src.graficos import (
         montar_cards_dashboard,
         montar_graficos_dashboard,
@@ -152,6 +182,56 @@ def eh_numero_finito(valor) -> bool:
         return bool(np.isfinite(float(valor)))
     except (TypeError, ValueError):
         return True
+
+
+def tabela_xlsx(
+    ws,
+    cabecalho_chave: str,
+) -> list[dict[str, object]]:
+    linha_cabecalho = None
+
+    for linha in ws.iter_rows():
+        valores = [
+            str(celula.value).strip()
+            if celula.value is not None
+            else ""
+            for celula in linha
+        ]
+
+        if cabecalho_chave in valores:
+            linha_cabecalho = linha[0].row
+            break
+
+    if linha_cabecalho is None:
+        return []
+
+    cabecalhos = [
+        str(celula.value).strip()
+        if celula.value is not None
+        else ""
+        for celula in ws[
+            linha_cabecalho
+        ]
+    ]
+
+    registros = []
+
+    for linha in ws.iter_rows(
+        min_row=linha_cabecalho + 1,
+        values_only=True,
+    ):
+        if all(valor is None for valor in linha):
+            continue
+
+        registros.append(
+            {
+                cabecalho: linha[indice]
+                for indice, cabecalho in enumerate(cabecalhos)
+                if cabecalho
+            }
+        )
+
+    return registros
 
 
 def adicionar_resultado(
@@ -927,27 +1007,75 @@ def testar_empresa(
             .sum()
         )
 
-        esperados_por_layout = {
-            LAYOUT_PADRAO: (12, 0),
-            LAYOUT_FINANCEIRA: (2, 10),
-            LAYOUT_SEGUROS_ESPECIAL: (2, 10),
-            "OUTRO": (0, 12),
-        }
-
-        esperado = (
-            esperados_por_layout.get(
-                layout_codigo
+        if layout_codigo == LAYOUT_FINANCEIRA:
+            indicadores_setoriais = (
+                calcular_indicadores_financeiros(
+                    cd_cvm,
+                    anos=janela,
+                )
             )
-        )
 
-        layout_ok = (
-            esperado is not None
-            and (
-                qtd_aplicaveis,
-                qtd_na,
+            codigos_layout = set(
+                indicadores_setoriais["INDICADOR"]
+                .astype(str)
+                .unique()
             )
-            == esperado
-        )
+
+            codigos_layout.update(
+                set(
+                    indicadores.loc[
+                        indicadores["INDICADOR"].isin(
+                            ["ROA", "ROE"]
+                        ),
+                        "INDICADOR",
+                    ]
+                    .astype(str)
+                    .unique()
+                )
+            )
+
+            esperado = set(
+                INDICADORES_FINANCEIROS_ESPERADOS
+            )
+
+            layout_ok = (
+                codigos_layout == esperado
+            )
+
+            detalhe_layout = (
+                f"layout={layout_codigo}; "
+                f"indicadores={sorted(codigos_layout)}; "
+                f"esperados={sorted(esperado)}"
+            )
+
+        else:
+            esperados_por_layout = {
+                LAYOUT_PADRAO: (12, 0),
+                LAYOUT_SEGUROS_ESPECIAL: (2, 10),
+                "OUTRO": (0, 12),
+            }
+
+            esperado = (
+                esperados_por_layout.get(
+                    layout_codigo
+                )
+            )
+
+            layout_ok = (
+                esperado is not None
+                and (
+                    qtd_aplicaveis,
+                    qtd_na,
+                )
+                == esperado
+            )
+
+            detalhe_layout = (
+                f"layout={layout_codigo}; "
+                f"aplicáveis={qtd_aplicaveis}; "
+                f"N/A={qtd_na}; "
+                f"esperado={esperado}"
+            )
 
         adicionar_resultado(
             resultados,
@@ -955,12 +1083,7 @@ def testar_empresa(
             empresa,
             "Layout e aplicabilidade",
             "OK" if layout_ok else "FALHA",
-            (
-                f"layout={layout_codigo}; "
-                f"aplicáveis={qtd_aplicaveis}; "
-                f"N/A={qtd_na}; "
-                f"esperado={esperado}"
-            ),
+            detalhe_layout,
             caso,
         )
 
@@ -1067,36 +1190,37 @@ def testar_empresa(
             caso,
         )
 
-        dupont = validar_dupont(
-            cd_cvm,
-            anos=janela,
-        )
-
-        erros_dupont = (
-            int(
-                dupont["STATUS"]
-                .astype(str)
-                .eq("ERRO")
-                .sum()
+        if layout_codigo != LAYOUT_FINANCEIRA:
+            dupont = validar_dupont(
+                cd_cvm,
+                anos=janela,
             )
-            if not dupont.empty
-            and "STATUS" in dupont.columns
-            else 0
-        )
 
-        adicionar_resultado(
-            resultados,
-            cd_cvm,
-            empresa,
-            "DuPont",
-            "OK" if erros_dupont == 0 else "FALHA",
-            (
-                "Nenhum resíduo fora da tolerância"
-                if erros_dupont == 0
-                else f"{erros_dupont} erro(s)"
-            ),
-            caso,
-        )
+            erros_dupont = (
+                int(
+                    dupont["STATUS"]
+                    .astype(str)
+                    .eq("ERRO")
+                    .sum()
+                )
+                if not dupont.empty
+                and "STATUS" in dupont.columns
+                else 0
+            )
+
+            adicionar_resultado(
+                resultados,
+                cd_cvm,
+                empresa,
+                "DuPont",
+                "OK" if erros_dupont == 0 else "FALHA",
+                (
+                    "Nenhum resíduo fora da tolerância"
+                    if erros_dupont == 0
+                    else f"{erros_dupont} erro(s)"
+                ),
+                caso,
+            )
 
         validacao = validar_empresa(
             cd_cvm=cd_cvm,
@@ -1148,11 +1272,39 @@ def testar_empresa(
             caso,
         )
 
-        if profundo:
-            relatorio = gerar_relatorio(
-                cd_cvm=cd_cvm,
-                nome_empresa=empresa,
-                anos=janela,
+        periodo_financeiro_insuficiente = (
+            layout_codigo == LAYOUT_FINANCEIRA
+            and len(janela) < 2
+        )
+
+        if profundo and periodo_financeiro_insuficiente:
+            adicionar_resultado(
+                resultados,
+                cd_cvm,
+                empresa,
+                "Relatório financeiro — período insuficiente",
+                "INFO",
+                (
+                    "Diagnóstico: o relatório financeiro requer "
+                    "pelo menos dois exercícios; "
+                    f"disponíveis={janela}."
+                ),
+                caso,
+            )
+
+        if profundo and not periodo_financeiro_insuficiente:
+            relatorio = (
+                gerar_relatorio_financeiro(
+                    cd_cvm=cd_cvm,
+                    nome_empresa=empresa,
+                    anos=janela,
+                )
+                if layout_codigo == LAYOUT_FINANCEIRA
+                else gerar_relatorio(
+                    cd_cvm=cd_cvm,
+                    nome_empresa=empresa,
+                    anos=janela,
+                )
             )
 
             ausentes_rel = (
@@ -1186,6 +1338,84 @@ def testar_empresa(
                 ),
                 caso,
             )
+
+            if layout_codigo == LAYOUT_FINANCEIRA:
+                analise_financeira = relatorio.get(
+                    "ANALISE_INDICADORES"
+                )
+
+                codigos_financeiros = (
+                    analise_financeira["INDICADOR"]
+                    .astype(str)
+                    .tolist()
+                    if isinstance(
+                        analise_financeira,
+                        pd.DataFrame,
+                    )
+                    and "INDICADOR"
+                    in analise_financeira.columns
+                    else []
+                )
+
+                dupont_financeiro = relatorio.get(
+                    "DUPONT"
+                )
+
+                dupont_vazio = (
+                    dupont_financeiro is None
+                    or (
+                        isinstance(
+                            dupont_financeiro,
+                            pd.DataFrame,
+                        )
+                        and dupont_financeiro.empty
+                    )
+                )
+
+                contrato_relatorio_ok = (
+                    len(codigos_financeiros) == 9
+                    and set(codigos_financeiros)
+                    == set(
+                        INDICADORES_FINANCEIROS_ESPERADOS
+                    )
+                    and not (
+                        set(codigos_financeiros)
+                        & INDICADORES_INCOMPATIVEIS_FINANCEIRA
+                    )
+                    and dupont_vazio
+                    and set(
+                        relatorio.get(
+                            "SINTESES_GRUPOS",
+                            {},
+                        ).keys()
+                    )
+                    == {
+                        "Capitalização e Funding",
+                        "Crescimento",
+                        "Intermediação e Rentabilidade",
+                    }
+                    and "layout FINANCEIRA"
+                    in str(
+                        relatorio.get("METODOLOGIA", "")
+                    )
+                )
+
+                adicionar_resultado(
+                    resultados,
+                    cd_cvm,
+                    empresa,
+                    "Relatório financeiro — contrato de 9 indicadores",
+                    (
+                        "OK"
+                        if contrato_relatorio_ok
+                        else "FALHA"
+                    ),
+                    (
+                        f"indicadores={codigos_financeiros}; "
+                        f"DuPont vazio={dupont_vazio}"
+                    ),
+                    caso,
+                )
 
             cards = montar_cards_dashboard(
                 indicadores,
@@ -1460,33 +1690,332 @@ def testar_empresa(
                     )
                 }
 
-                export_setorial_ok = (
-                    "N/A" in valores_ind
-                    and "N/A" in valores_dre
-                    and id_campos.get(
-                        "Layout CVM"
+                if layout_codigo == LAYOUT_FINANCEIRA:
+                    registros_ind = tabela_xlsx(
+                        ws_ind,
+                        "INDICADOR",
                     )
-                    == layout_codigo
-                )
 
-                adicionar_resultado(
-                    resultados,
-                    cd_cvm,
-                    empresa,
-                    "Exportação setorial — N/A e layout",
-                    (
-                        "OK"
-                        if export_setorial_ok
-                        else "FALHA"
-                    ),
-                    (
-                        f"N/A indicadores={'N/A' in valores_ind}; "
-                        f"N/A DRE={'N/A' in valores_dre}; "
-                        f"layout exportado="
-                        f"{id_campos.get('Layout CVM')}"
-                    ),
-                    caso,
-                )
+                    codigos_exportados = [
+                        str(registro.get("INDICADOR"))
+                        for registro in registros_ind
+                        if registro.get("INDICADOR") is not None
+                    ]
+
+                    conjunto_exportado = set(
+                        codigos_exportados
+                    )
+
+                    indicadores_excel_ok = (
+                        len(codigos_exportados) == 9
+                        and conjunto_exportado
+                        == set(
+                            INDICADORES_FINANCEIROS_ESPERADOS
+                        )
+                        and not (
+                            conjunto_exportado
+                            & INDICADORES_INCOMPATIVEIS_FINANCEIRA
+                        )
+                    )
+
+                    adicionar_resultado(
+                        resultados,
+                        cd_cvm,
+                        empresa,
+                        "Exportação financeira — 9 indicadores",
+                        (
+                            "OK"
+                            if indicadores_excel_ok
+                            else "FALHA"
+                        ),
+                        (
+                            f"indicadores={codigos_exportados}; "
+                            f"incompatíveis="
+                            f"{sorted(conjunto_exportado & INDICADORES_INCOMPATIVEIS_FINANCEIRA)}"
+                        ),
+                        caso,
+                    )
+
+                    analise_origem = relatorio[
+                        "ANALISE_INDICADORES"
+                    ].set_index(
+                        "INDICADOR"
+                    )
+
+                    sentinelas_ok = True
+                    divergencias = []
+
+                    for registro in registros_ind:
+                        codigo = str(
+                            registro.get(
+                                "INDICADOR",
+                                "",
+                            )
+                        )
+
+                        if codigo not in analise_origem.index:
+                            sentinelas_ok = False
+                            divergencias.append(
+                                f"{codigo}: ausente na origem"
+                            )
+                            continue
+
+                        origem = analise_origem.loc[
+                            codigo
+                        ]
+
+                        for coluna in [
+                            "BASE",
+                            "INTERMEDIARIO",
+                            "RECENTE",
+                        ]:
+                            valor_origem = origem[
+                                coluna
+                            ]
+                            valor_excel = registro.get(
+                                coluna
+                            )
+
+                            if pd.isna(valor_origem):
+                                esperado_ausente = (
+                                    "N/A"
+                                    if str(
+                                        origem.get(
+                                            "APLICABILIDADE",
+                                            "",
+                                        )
+                                    )
+                                    == "NAO_APLICAVEL"
+                                    else "N/D"
+                                )
+
+                                if valor_excel != esperado_ausente:
+                                    sentinelas_ok = False
+                                    divergencias.append(
+                                        f"{codigo}/{coluna}: "
+                                        f"esperado {esperado_ausente}, "
+                                        f"encontrado {valor_excel}"
+                                    )
+
+                            elif (
+                                not isinstance(
+                                    valor_excel,
+                                    (int, float),
+                                )
+                                or abs(
+                                    float(valor_excel)
+                                    - float(valor_origem)
+                                )
+                                > 1e-12
+                            ):
+                                sentinelas_ok = False
+                                divergencias.append(
+                                    f"{codigo}/{coluna}: "
+                                    "valor numérico divergente"
+                                )
+
+                    sentinelas_ok = (
+                        sentinelas_ok
+                        and "N/A" in valores_dre
+                    )
+
+                    adicionar_resultado(
+                        resultados,
+                        cd_cvm,
+                        empresa,
+                        "Exportação financeira — N/D e N/A",
+                        (
+                            "OK"
+                            if sentinelas_ok
+                            else "FALHA"
+                        ),
+                        (
+                            f"N/A DRE={'N/A' in valores_dre}; "
+                            f"divergências={divergencias[:5]}"
+                        ),
+                        caso,
+                    )
+
+                    ws_rel = wb[
+                        "Relatório"
+                    ]
+                    valores_rel = [
+                        celula.value
+                        for linha in ws_rel.iter_rows()
+                        for celula in linha
+                        if celula.value is not None
+                    ]
+
+                    relatorio_excel_ok = (
+                        any(
+                            "layout FINANCEIRA"
+                            in str(valor)
+                            for valor in valores_rel
+                        )
+                        and not any(
+                            str(valor).strip().casefold()
+                            == "dupont"
+                            for valor in valores_rel
+                        )
+                    )
+
+                    adicionar_resultado(
+                        resultados,
+                        cd_cvm,
+                        empresa,
+                        "Exportação financeira — relatório específico",
+                        (
+                            "OK"
+                            if relatorio_excel_ok
+                            else "FALHA"
+                        ),
+                        (
+                            "resumo financeiro presente; "
+                            "seção DuPont ausente"
+                            if relatorio_excel_ok
+                            else (
+                                "resumo financeiro ou ausência "
+                                "de DuPont divergente"
+                            )
+                        ),
+                        caso,
+                    )
+
+                    registros_val = tabela_xlsx(
+                        wb["Validação"],
+                        "CATEGORIA",
+                    )
+
+                    detalhes_val = " ".join(
+                        str(registro.get("DETALHE", ""))
+                        for registro in registros_val
+                    )
+
+                    quantidades_val = [
+                        registro
+                        for registro in registros_val
+                        if str(
+                            registro.get("TESTE", "")
+                        )
+                        == "Quantidade de indicadores"
+                    ]
+
+                    coberturas_val = [
+                        registro
+                        for registro in registros_val
+                        if str(
+                            registro.get("TESTE", "")
+                        )
+                        == "Cobertura dos indicadores"
+                    ]
+
+                    detalhes_cobertura = " ".join(
+                        str(registro.get("DETALHE", ""))
+                        for registro in coberturas_val
+                    )
+
+                    incompativeis_validacao = {
+                        codigo
+                        for codigo
+                        in INDICADORES_INCOMPATIVEIS_FINANCEIRA
+                        if re.search(
+                            rf"(?<![A-Z0-9_]){re.escape(codigo)}"
+                            r"(?![A-Z0-9_])",
+                            detalhes_cobertura,
+                        )
+                    }
+
+                    validacao_excel_ok = (
+                        len(quantidades_val) == len(janela)
+                        and len(coberturas_val) == len(janela)
+                        and all(
+                            "9 indicadores financeiros"
+                            in str(
+                                registro.get("DETALHE", "")
+                            )
+                            for registro in quantidades_val
+                        )
+                        and "12 indicadores"
+                        not in detalhes_val
+                        and not incompativeis_validacao
+                        and not any(
+                            str(
+                                registro.get("CATEGORIA", "")
+                            )
+                            == "DuPont"
+                            for registro in registros_val
+                        )
+                    )
+
+                    adicionar_resultado(
+                        resultados,
+                        cd_cvm,
+                        empresa,
+                        "Exportação financeira — validação de 9 indicadores",
+                        (
+                            "OK"
+                            if validacao_excel_ok
+                            else "FALHA"
+                        ),
+                        (
+                            f"linhas de quantidade={len(quantidades_val)}; "
+                            f"linhas de cobertura={len(coberturas_val)}; "
+                            f"12 indicadores={'12 indicadores' in detalhes_val}; "
+                            f"incompatíveis={sorted(incompativeis_validacao)}; "
+                            f"DuPont="
+                            f"{any(str(r.get('CATEGORIA', '')) == 'DuPont' for r in registros_val)}"
+                        ),
+                        caso,
+                    )
+
+                    adicionar_resultado(
+                        resultados,
+                        cd_cvm,
+                        empresa,
+                        "Exportação financeira — layout",
+                        (
+                            "OK"
+                            if id_campos.get(
+                                "Layout CVM"
+                            )
+                            == LAYOUT_FINANCEIRA
+                            else "FALHA"
+                        ),
+                        (
+                            f"layout exportado="
+                            f"{id_campos.get('Layout CVM')}"
+                        ),
+                        caso,
+                    )
+
+                else:
+                    export_setorial_ok = (
+                        "N/A" in valores_ind
+                        and "N/A" in valores_dre
+                        and id_campos.get(
+                            "Layout CVM"
+                        )
+                        == layout_codigo
+                    )
+
+                    adicionar_resultado(
+                        resultados,
+                        cd_cvm,
+                        empresa,
+                        "Exportação setorial — N/A e layout",
+                        (
+                            "OK"
+                            if export_setorial_ok
+                            else "FALHA"
+                        ),
+                        (
+                            f"N/A indicadores={'N/A' in valores_ind}; "
+                            f"N/A DRE={'N/A' in valores_dre}; "
+                            f"layout exportado="
+                            f"{id_campos.get('Layout CVM')}"
+                        ),
+                        caso,
+                    )
 
                 wb.close()
 
