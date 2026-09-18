@@ -1,5 +1,6 @@
 # Ambiente virtual
 .venv/
+.venv_c2/
 venv/
 env/
 
@@ -35,6 +36,7 @@ data/processed/*
 # Resultados locais de auditoria
 data/processed/auditoria_adversarial_*.csv
 data/processed/auditoria_saldos_auxiliares_*.csv
+outputs/
 
 # Arquivos temporários de Excel
 ~$*.xlsx
