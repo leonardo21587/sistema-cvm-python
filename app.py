@@ -431,6 +431,59 @@ def formatar_raw(valor):
         return str(valor)
 
 
+
+def exibir_grafico_dashboard(
+    figura,
+    key: str,
+):
+    # Evita renderizar eixos vazios no painel.
+    if figura is None:
+        st.warning(
+            "Gráfico não disponível."
+        )
+        return
+
+    if len(
+        getattr(
+            figura,
+            "data",
+            [],
+        )
+    ) == 0:
+        mensagem = (
+            "Dados não disponíveis para o período."
+        )
+
+        anotacoes = getattr(
+            figura.layout,
+            "annotations",
+            None,
+        )
+
+        if anotacoes:
+            texto_anotacao = getattr(
+                anotacoes[0],
+                "text",
+                None,
+            )
+
+            if texto_anotacao:
+                mensagem = str(
+                    texto_anotacao
+                )
+
+        st.info(
+            mensagem
+        )
+        return
+
+    st.plotly_chart(
+        figura,
+        use_container_width=True,
+        key=key,
+    )
+
+
 # ============================================================
 # CATÁLOGO
 # ============================================================
@@ -2184,11 +2237,10 @@ if empresa_selecionada is not None:
             ano_base,
         )
 
-        st.plotly_chart(
+        exibir_grafico_dashboard(
             graficos_dashboard[
                 "estrutura"
             ],
-            use_container_width=True,
             key="grafico_estrutura_dashboard",
         )
 
@@ -2232,21 +2284,19 @@ if empresa_selecionada is not None:
 
         with coluna_liquidez:
 
-            st.plotly_chart(
+            exibir_grafico_dashboard(
                 graficos_dashboard[
                     "liquidez"
                 ],
-                use_container_width=True,
                 key="grafico_liquidez_dashboard",
             )
 
         with coluna_icj:
 
-            st.plotly_chart(
+            exibir_grafico_dashboard(
                 graficos_dashboard[
                     "icj"
                 ],
-                use_container_width=True,
                 key="grafico_icj_dashboard",
             )
 
@@ -2290,21 +2340,19 @@ if empresa_selecionada is not None:
 
         with coluna_rentabilidade:
 
-            st.plotly_chart(
+            exibir_grafico_dashboard(
                 graficos_dashboard[
                     "rentabilidade"
                 ],
-                use_container_width=True,
                 key="grafico_rentabilidade_dashboard",
             )
 
         with coluna_ga:
 
-            st.plotly_chart(
+            exibir_grafico_dashboard(
                 graficos_dashboard[
                     "ga"
                 ],
-                use_container_width=True,
                 key="grafico_ga_dashboard",
             )
 
