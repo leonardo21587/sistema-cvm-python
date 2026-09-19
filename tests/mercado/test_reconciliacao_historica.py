@@ -52,6 +52,7 @@ def main() -> None:
     print("RESULTADO: APROVADO")
     print("Separação alias existente vs instrumento histórico novo: aprovada")
     print("Nenhum ID é alocado nesta subetapa: aprovado")
+    print("Classificação explícita de fora do universo: cobertura mantida")
 
 
 if __name__ == "__main__":
