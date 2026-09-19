@@ -12,6 +12,8 @@ if str(ROOT_DIR) not in sys.path:
 from src.mercado.catalogo_vigencias import (  # noqa: E402
     EvidenciaFcaTicker,
     ObservacaoIsin,
+    _fim_por_evidencia,
+    _inicio_por_evidencia,
     construir_catalogo_temporal,
 )
 
@@ -101,10 +103,69 @@ def evidencia(
     )
 
 
+def teste_limites_fca_vs_cotahist():
+    base = reconciliado(
+        "TEST3", "000001", "ON",
+        "2025-02-14", "2025-12-30"
+    )
+
+    # Início FCA posterior à negociação observada: COTAHIST prevalece.
+    evid = [
+        evidencia(
+            2025, "TEST3", "000001",
+            date(2025, 2, 17), None
+        )
+    ]
+    inicio, origem = _inicio_por_evidencia(
+        linha_ticker=base,
+        evidencias=evid,
+    )
+    assert inicio == date(2025, 2, 14)
+    assert origem == "COTAHIST_2025_CORRECAO_LIMITE_FCA"
+
+    # Fim FCA igual à última negociação observada vira fim exclusivo +1 dia.
+    base_fim = reconciliado(
+        "TEST3", "000001", "ON",
+        "2025-01-02", "2025-09-22"
+    )
+    evid_fim = [
+        evidencia(
+            2025, "TEST3", "000001",
+            date(2020, 1, 1), date(2025, 9, 22)
+        )
+    ]
+    fim, fonte = _fim_por_evidencia(
+        linha_ticker=base_fim,
+        evidencias=evid_fim,
+    )
+    assert fim == date(2025, 9, 23)
+    assert fonte == "FCA_FIM_INCLUSIVO_NORMALIZADO"
+
+    # Fim FCA anterior ao COTAHIST observado é tratado como metadado
+    # desatualizado e não trunca a série.
+    base_stale = reconciliado(
+        "TEST3", "000001", "ON",
+        "2025-01-02", "2025-11-13"
+    )
+    evid_stale = [
+        evidencia(
+            2025, "TEST3", "000001",
+            date(2020, 1, 1), date(2025, 11, 4)
+        )
+    ]
+    fim_stale, _ = _fim_por_evidencia(
+        linha_ticker=base_stale,
+        evidencias=evid_stale,
+    )
+    assert fim_stale is None
+
+
 def main():
     print("=" * 88)
     print("SISTEMA CVM — TESTE D.4 — VIGÊNCIAS DE TICKER/ISIN")
     print("=" * 88)
+
+    teste_limites_fca_vs_cotahist()
 
     existentes = [
         instrumento(3001, "002437", "ON", "2010-01-01"),

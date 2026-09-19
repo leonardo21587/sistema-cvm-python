@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable
 
 
@@ -116,40 +116,80 @@ def _normalizar_linha_identificador(linha: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _melhor_evidencia_fca(
+def _faixa_fca_relevante(
     evidencias: list[EvidenciaFcaTicker],
     *,
     primeira_data_2025: date,
     ultima_data_2025: date,
-) -> EvidenciaFcaTicker | None:
-    candidatas = []
+) -> tuple[date | None, date | None]:
+    """
+    Consolida todas as evidencias FCA compatíveis com a janela observada.
+
+    O FCA é evidência cadastral. O COTAHIST é a prova observada de que houve
+    negociação em determinada data. Por isso:
+    - uma data inicial FCA posterior à primeira negociação observada não pode
+      invalidar o COTAHIST;
+    - uma data final FCA igual à última negociação é tratada como inclusiva
+      para fins de conversão ao intervalo analítico [inicio, fim);
+    - uma data final FCA anterior à última negociação observada é considerada
+      desatualizada para este gate e não encerra o ticker;
+    - registros FCA antigos encerrados antes da janela 2025 não são colados a
+      uma reentrada posterior do mesmo ticker.
+    """
+    candidatas: list[tuple[date, date | None]] = []
 
     for item in evidencias:
         inicio = (
             item.data_inicio_negociacao
             or item.data_inicio_listagem
+            or date(item.ano, 1, 1)
         )
         fim = (
             item.data_fim_negociacao
             or item.data_fim_listagem
         )
 
-        if inicio is not None and inicio > ultima_data_2025:
-            continue
-        if fim is not None and primeira_data_2025 >= fim:
+        if inicio > ultima_data_2025:
             continue
 
-        candidatas.append(item)
+        # DATA_FIM do FCA pode representar a própria última data negociada.
+        # Portanto a comparação de pertinência é inclusiva.
+        if fim is not None and primeira_data_2025 > fim:
+            continue
+
+        candidatas.append((inicio, fim))
 
     if not candidatas:
-        return None
+        return None, None
 
-    def ranking(item: EvidenciaFcaTicker):
-        referencia = item.data_referencia or date(item.ano, 12, 31)
-        versao = item.versao if item.versao is not None else -1
-        return referencia, versao, item.ano
+    inicio = min(item[0] for item in candidatas)
 
-    return max(candidatas, key=ranking)
+    # Se o COTAHIST mostra negociação antes do início cadastral mais antigo
+    # ainda relevante, a evidência observada prevalece para a vigência
+    # analítica usada pelo resolvedor.
+    if inicio > primeira_data_2025:
+        inicio = primeira_data_2025
+
+    fins = [item[1] for item in candidatas]
+    if any(fim is None for fim in fins):
+        fim_exclusivo = None
+    else:
+        fim_fca = max(fim for fim in fins if fim is not None)
+
+        if fim_fca < ultima_data_2025:
+            # Metadado cadastral não pode truncar negociação efetivamente
+            # observada depois dessa data.
+            fim_exclusivo = None
+        elif fim_fca == ultima_data_2025:
+            # Converte limite observado inclusivo para [inicio, fim).
+            fim_exclusivo = fim_fca + timedelta(days=1)
+        else:
+            # Quando a data FCA é posterior à última negociação observada,
+            # ela já serve como limite exclusivo conservador. Continuidade
+            # explícita de ticker pode ajustar esse limite depois.
+            fim_exclusivo = fim_fca
+
+    return inicio, fim_exclusivo
 
 
 def _inicio_por_evidencia(
@@ -165,19 +205,27 @@ def _inicio_por_evidencia(
 
     primeira = _data(linha_ticker["PRIMEIRA_DATA_2025"])
     ultima = _data(linha_ticker["ULTIMA_DATA_2025"])
-    melhor = _melhor_evidencia_fca(
+    inicio_fca, _ = _faixa_fca_relevante(
         evidencias,
         primeira_data_2025=primeira,
         ultima_data_2025=ultima,
     )
 
-    if melhor is not None:
-        inicio = (
-            melhor.data_inicio_negociacao
-            or melhor.data_inicio_listagem
+    if inicio_fca is not None:
+        origem = (
+            "COTAHIST_2025_CORRECAO_LIMITE_FCA"
+            if inicio_fca == primeira
+            and any(
+                (
+                    item.data_inicio_negociacao
+                    or item.data_inicio_listagem
+                    or date(item.ano, 1, 1)
+                ) > primeira
+                for item in evidencias
+            )
+            else "FCA_DATA_INICIO"
         )
-        if inicio is not None:
-            return max(DATA_INICIO_ALVO, inicio), "FCA_DATA_INICIO"
+        return max(DATA_INICIO_ALVO, inicio_fca), origem
 
     anos = sorted({
         item.ano
@@ -203,26 +251,19 @@ def _fim_por_evidencia(
 
     primeira = _data(linha_ticker["PRIMEIRA_DATA_2025"])
     ultima = _data(linha_ticker["ULTIMA_DATA_2025"])
-    melhor = _melhor_evidencia_fca(
+    _, fim_fca = _faixa_fca_relevante(
         evidencias,
         primeira_data_2025=primeira,
         ultima_data_2025=ultima,
     )
 
-    if melhor is None:
+    if fim_fca is None or fim_fca > FIM_JANELA_2025:
         return None, ""
 
-    fim = (
-        melhor.data_fim_negociacao
-        or melhor.data_fim_listagem
-    )
+    if fim_fca == ultima + timedelta(days=1):
+        return fim_fca, "FCA_FIM_INCLUSIVO_NORMALIZADO"
 
-    # O gate atual fecha somente fatos observáveis até o encerramento de 2025.
-    # Eventos iniciados em 2026 serão tratados na atualização incremental.
-    if fim is not None and fim <= FIM_JANELA_2025:
-        return fim, "FCA_DATA_FIM"
-
-    return None, ""
+    return fim_fca, "FCA_DATA_FIM"
 
 
 def _linha_existente_cobre_2025(
@@ -697,6 +738,11 @@ def construir_catalogo_temporal(
         tuple[int, str],
         list[date],
     ] = {}
+    isin_nao_resolvido: dict[
+        tuple[str, str, tuple[int, ...]],
+        list[date],
+    ] = {}
+
     for obs in observacoes_isin:
         ticker = obs.ticker.upper()
         isin = obs.isin.upper()
@@ -706,21 +752,33 @@ def construir_catalogo_temporal(
             data_referencia=obs.data,
         )
         if len(ids) != 1:
-            revisao.append(
-                {
-                    "NIVEL": "ISIN",
-                    "CHAVE": f"{ticker}|{obs.data}|{isin}",
-                    "DETALHE": (
-                        "TICKER_NAO_RESOLVE_UNIVOCAMENTE:"
-                        + "|".join(str(x) for x in ids)
-                    ),
-                }
-            )
+            isin_nao_resolvido.setdefault(
+                (ticker, isin, tuple(ids)),
+                [],
+            ).append(obs.data)
             continue
+
         observacoes_por_id_isin.setdefault(
             (ids[0], isin),
             [],
         ).append(obs.data)
+
+    # Uma falha temporal de ticker não deve gerar centenas de revisões
+    # idênticas, uma por pregão. Agrega por ticker/ISIN/resultado.
+    for (ticker, isin, ids), datas in sorted(isin_nao_resolvido.items()):
+        datas = sorted(set(datas))
+        revisao.append(
+            {
+                "NIVEL": "ISIN",
+                "CHAVE": f"{ticker}|{isin}",
+                "DETALHE": (
+                    "TICKER_NAO_RESOLVE_UNIVOCAMENTE:"
+                    + "|".join(str(x) for x in ids)
+                    + f";PRIMEIRA={datas[0]};ULTIMA={datas[-1]};"
+                    + f"OBS={len(datas)}"
+                ),
+            }
+        )
 
     por_id_novos_isins: dict[int, list[tuple[str, date, date]]] = {}
     for (instrumento_id, isin), datas in observacoes_por_id_isin.items():
