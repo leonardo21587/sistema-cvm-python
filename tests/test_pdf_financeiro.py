@@ -18,13 +18,126 @@ from src.contexto_relatorio import (  # noqa: E402
     montar_contexto_relatorio,
 )
 from src.pdf_financeiro import (  # noqa: E402
+    INDICADORES_POR_LAYOUT,
     MIME_PDF,
     PeriodoInsuficientePDF,
     _estilos,
+    _formatar_valor_indicador,
     _formatar_valor_demonstracao,
+    _montar_tabela_indicadores,
     _montar_tabela_demonstracao,
     gerar_pdf_financeiro,
 )
+
+
+GRUPOS_PADRAO = {
+    "IPL": "Estrutura de Capital",
+    "PCT": "Estrutura de Capital",
+    "CE": "Estrutura de Capital",
+    "EFSAT": "Estrutura de Capital",
+    "LG": "Liquidez",
+    "LC": "Liquidez",
+    "LS": "Liquidez",
+    "ICJ": "Liquidez",
+    "GA": "Lucratividade/Desempenho",
+    "RSV": "Lucratividade/Desempenho",
+    "ROA": "Lucratividade/Desempenho",
+    "ROE": "Lucratividade/Desempenho",
+}
+
+UNIDADES_PADRAO = {
+    "IPL": "%", "PCT": "%", "CE": "%", "EFSAT": "%",
+    "LG": "razão", "LC": "razão", "LS": "razão", "ICJ": "vezes",
+    "GA": "vezes", "RSV": "%", "ROA": "%", "ROE": "%",
+}
+
+GRUPOS_FINANCEIRA = {
+    "CAP_CONTABIL": "Capitalização e Funding",
+    "PF_ATIVO": "Capitalização e Funding",
+    "CRESC_ATIVO": "Crescimento",
+    "CRESC_PL": "Crescimento",
+    "CRESC_LL": "Crescimento",
+    "RBI_ATIVO_MEDIO": "Intermediação e Rentabilidade",
+    "PRETRIB_ATIVO_MEDIO": "Intermediação e Rentabilidade",
+    "ROA": "Intermediação e Rentabilidade",
+    "ROE": "Intermediação e Rentabilidade",
+}
+
+
+def _indicadores_oficiais(layout: str, anos: list[int]) -> dict:
+    codigos = INDICADORES_POR_LAYOUT[layout]
+    grupos = GRUPOS_PADRAO if layout == "PADRAO" else GRUPOS_FINANCEIRA
+    unidades = (
+        UNIDADES_PADRAO
+        if layout == "PADRAO"
+        else {codigo: "%" for codigo in codigos}
+    )
+    analise = pd.DataFrame(
+        [
+            {
+                "GRUPO": grupos[codigo],
+                "INDICADOR": codigo,
+                "NOME": f"Indicador oficial {codigo}",
+                "DELTA": (
+                    "+1,00 p.p."
+                    if indice == 0
+                    else "-0,25 p.p."
+                    if indice == 1
+                    else "N/D"
+                ),
+            }
+            for indice, codigo in enumerate(codigos)
+        ]
+    )
+
+    if layout == "PADRAO":
+        registros = []
+        for indice, codigo in enumerate(codigos):
+            registro = {
+                "GRUPO": grupos[codigo],
+                "INDICADOR": codigo,
+                "UNIDADE": unidades[codigo],
+                "APLICABILIDADE": "APLICAVEL",
+            }
+            for posicao, ano in enumerate(anos):
+                registro[ano] = (indice + 1) / 100 + posicao / 100
+            registros.append(registro)
+        base_oficial = pd.DataFrame(registros)
+        base_oficial[anos] = base_oficial[anos].astype(object)
+        base_oficial.loc[0, anos[0]] = 0.0
+        base_oficial.loc[1, anos[0]] = -0.25
+        base_oficial.loc[2, anos[0]] = "N/D"
+        base_oficial.loc[3, anos[0]] = "N/A"
+    else:
+        registros = []
+        for indice, codigo in enumerate(codigos):
+            for posicao, ano in enumerate(anos):
+                valor = (indice + 1) / 100 + posicao / 100
+                status = "OK"
+                if indice == 0 and posicao == 0:
+                    valor = 0.0
+                elif indice == 1 and posicao == 0:
+                    valor = -0.25
+                elif indice == 2 and posicao == 0:
+                    valor = pd.NA
+                    status = "N/D"
+                elif indice == 3 and posicao == 0:
+                    valor = pd.NA
+                    status = "N/A"
+                registros.append(
+                    {
+                        "ANO": ano,
+                        "GRUPO": grupos[codigo],
+                        "INDICADOR": codigo,
+                        "NOME": f"Indicador oficial {codigo}",
+                        "UNIDADE": unidades[codigo],
+                        "VALOR": valor,
+                        "STATUS": status,
+                    }
+                )
+        base_oficial = pd.DataFrame(registros)
+
+    return {"ANALISE": analise, "BASE_OFICIAL": base_oficial}
 
 
 def _demonstracao(
@@ -85,13 +198,7 @@ def _demonstracao(
 
 
 def _objetos_oficiais(layout: str, anos: list[int]) -> dict:
-    base_oficial = pd.DataFrame(
-        {
-            "INDICADOR": ["ZERO", "AUSENTE", "NAO_APLICAVEL", "SINAL"],
-            "VALOR": [0.0, "N/D", "N/A", -0.25],
-        }
-    )
-    analise = base_oficial.copy(deep=True)
+    indicadores = _indicadores_oficiais(layout, anos)
     narrativa = None
     if len(anos) >= 2:
         narrativa = {
@@ -115,10 +222,7 @@ def _objetos_oficiais(layout: str, anos: list[int]) -> dict:
             demonstracao: _demonstracao(layout, demonstracao, anos)
             for demonstracao in ("BPA", "BPP", "DRE")
         },
-        "indicadores": {
-            "ANALISE": analise,
-            "BASE_OFICIAL": base_oficial,
-        },
+        "indicadores": indicadores,
         "narrativa": narrativa,
         "status_validacao": "OK",
         "validacao": pd.DataFrame(
@@ -156,8 +260,18 @@ def testar_contexto_temporal_e_sentinelas() -> None:
             assert contexto["PERIODO"]["MODO_TEMPORAL"] == modo
             assert contexto["PERIODO"]["QTD_EXERCICIOS"] == quantidade
 
-            valores = contexto["INDICADORES"]["BASE_OFICIAL"]["VALOR"].tolist()
-            assert valores == [0.0, "N/D", "N/A", -0.25]
+            base = contexto["INDICADORES"]["BASE_OFICIAL"]
+            if layout == "PADRAO":
+                assert base.loc[0, anos[0]] == 0.0
+                assert base.loc[1, anos[0]] == -0.25
+                assert base.loc[2, anos[0]] == "N/D"
+                assert base.loc[3, anos[0]] == "N/A"
+            else:
+                primeiro_ano = base[base["ANO"] == anos[0]]
+                assert primeiro_ano["VALOR"].iloc[0] == 0.0
+                assert primeiro_ano["VALOR"].iloc[1] == -0.25
+                assert primeiro_ano["STATUS"].iloc[2] == "N/D"
+                assert primeiro_ano["STATUS"].iloc[3] == "N/A"
             assert objetos["indicadores"]["BASE_OFICIAL"].equals(
                 original["BASE_OFICIAL"]
             )
@@ -292,12 +406,98 @@ def testar_formatacao_e_tabela_multipagina() -> None:
     assert quadro.attrs == original.attrs
 
 
+def testar_indicadores_por_layout_sem_recalculo() -> None:
+    assert _formatar_valor_indicador(0.0, "%", "OK") == "0,00%"
+    assert _formatar_valor_indicador(-0.25, "%", "OK") == "-25,00%"
+    assert _formatar_valor_indicador(pd.NA, "%", "N/D") == "N/D"
+    assert _formatar_valor_indicador(pd.NA, "%", "N/A") == "N/A"
+
+    for layout in ("PADRAO", "FINANCEIRA"):
+        anos = [2023, 2024, 2025]
+        indicadores = _indicadores_oficiais(layout, anos)
+        original_analise = indicadores["ANALISE"].copy(deep=True)
+        original_base = indicadores["BASE_OFICIAL"].copy(deep=True)
+        tabela = _montar_tabela_indicadores(
+            indicadores,
+            layout,
+            anos,
+            _estilos(),
+        )
+
+        assert tabela.repeatRows == 1
+        assert sum(tabela._colWidths) <= 170 * 72 / 25.4 + 0.01
+        textos = [
+            celula.getPlainText()
+            for linha in tabela._cellvalues
+            for celula in linha
+            if isinstance(celula, type(tabela._cellvalues[0][0]))
+        ]
+        for codigo in INDICADORES_POR_LAYOUT[layout]:
+            assert any(codigo in texto for texto in textos)
+
+        if layout == "FINANCEIRA":
+            incompatíveis = set(INDICADORES_POR_LAYOUT["PADRAO"]) - {
+                "ROA", "ROE"
+            }
+            for codigo in incompatíveis:
+                assert not any(
+                    texto == codigo or texto.endswith(" " + codigo)
+                    for texto in textos
+                )
+
+        linhas_indicadores = [
+            linha
+            for linha in tabela._cellvalues
+            if hasattr(linha[0], "getPlainText")
+            and any(
+                codigo in linha[0].getPlainText()
+                for codigo in INDICADORES_POR_LAYOUT[layout]
+            )
+        ]
+        assert len(linhas_indicadores) == len(INDICADORES_POR_LAYOUT[layout])
+        assert linhas_indicadores[0][2].getPlainText() == "0,00%"
+        assert linhas_indicadores[1][2].getPlainText() == "-25,00%"
+        assert linhas_indicadores[2][2].getPlainText() == "N/D"
+        assert linhas_indicadores[3][2].getPlainText() == "N/A"
+        assert linhas_indicadores[0][-1].getPlainText() == "+1,00 p.p."
+        assert linhas_indicadores[1][-1].getPlainText() == "-0,25 p.p."
+
+        pd.testing.assert_frame_equal(
+            indicadores["ANALISE"],
+            original_analise,
+            check_flags=True,
+        )
+        pd.testing.assert_frame_equal(
+            indicadores["BASE_OFICIAL"],
+            original_base,
+            check_flags=True,
+        )
+
+        sem_delta = deepcopy(indicadores)
+        sem_delta["ANALISE"] = sem_delta["ANALISE"].drop(columns="DELTA")
+        tabela_sem_delta = _montar_tabela_indicadores(
+            sem_delta,
+            layout,
+            anos,
+            _estilos(),
+        )
+        assert len(tabela_sem_delta._cellvalues[0]) == 2 + len(anos)
+        assert all(
+            not (
+                hasattr(celula, "getPlainText")
+                and celula.getPlainText() == "Variação"
+            )
+            for celula in tabela_sem_delta._cellvalues[0]
+        )
+
+
 def main() -> None:
     testar_contexto_temporal_e_sentinelas()
     testar_pdf_minimo_por_layout()
     testar_demonstracoes_sem_recalculo_ou_mutacao()
     testar_formatacao_e_tabela_multipagina()
-    print("RESULTADO: APROVADO - demonstracoes no PDF da C.3.")
+    testar_indicadores_por_layout_sem_recalculo()
+    print("RESULTADO: APROVADO - indicadores no PDF da C.4.")
 
 
 if __name__ == "__main__":

@@ -42,6 +42,18 @@ ROTULOS_MODALIDADE = {
     "ACADEMICO": "Acadêmico",
 }
 
+INDICADORES_POR_LAYOUT = {
+    "PADRAO": [
+        "IPL", "PCT", "CE", "EFSAT", "LG", "LC",
+        "LS", "ICJ", "GA", "RSV", "ROA", "ROE",
+    ],
+    "FINANCEIRA": [
+        "CAP_CONTABIL", "PF_ATIVO", "CRESC_ATIVO", "CRESC_PL",
+        "CRESC_LL", "RBI_ATIVO_MEDIO", "PRETRIB_ATIVO_MEDIO",
+        "ROA", "ROE",
+    ],
+}
+
 
 class PeriodoInsuficientePDF(ValueError):
     """O contexto existe, mas não admite PDF comparativo."""
@@ -185,6 +197,24 @@ def _estilos() -> dict[str, ParagraphStyle]:
             alignment=TA_RIGHT,
             textColor=colors.HexColor("#172033"),
             splitLongWords=False,
+        ),
+        "indicador_tabela": ParagraphStyle(
+            "IndicadorTabela",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=7,
+            leading=8.2,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#172033"),
+        ),
+        "grupo_indicador": ParagraphStyle(
+            "GrupoIndicador",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=7.2,
+            leading=8.5,
+            alignment=TA_LEFT,
+            textColor=AZUL_TEXTO,
         ),
     }
 
@@ -420,6 +450,275 @@ def _adicionar_demonstracoes(
                 historia.append(_montar_tabela_demonstracao(trecho, estilos))
 
 
+def _primeiro_registro(quadro: Any, indicador: str) -> Any:
+    if quadro is None or not hasattr(quadro, "columns"):
+        return None
+    if "INDICADOR" not in quadro.columns:
+        return None
+
+    registros = quadro[
+        quadro["INDICADOR"].astype(str) == str(indicador)
+    ]
+    if registros.empty:
+        return None
+    return registros.iloc[0]
+
+
+def _texto_oficial(registro: Any, coluna: str) -> str | None:
+    if registro is None or coluna not in registro.index:
+        return None
+    valor = registro[coluna]
+    if _eh_ausente(valor):
+        return None
+    return str(valor).strip()
+
+
+def _valor_indicador_oficial(
+    base_oficial: Any,
+    indicador: str,
+    ano: Any,
+) -> tuple[Any, str | None]:
+    if "ANO" in base_oficial.columns and "VALOR" in base_oficial.columns:
+        registros = base_oficial[
+            (base_oficial["INDICADOR"].astype(str) == str(indicador))
+            & (base_oficial["ANO"].astype(str) == str(ano))
+        ]
+        if registros.empty:
+            return None, None
+        registro = registros.iloc[0]
+        status = _texto_oficial(registro, "STATUS")
+        return registro["VALOR"], status
+
+    registro = _primeiro_registro(base_oficial, indicador)
+    if registro is None:
+        return None, None
+
+    coluna_ano = next(
+        (
+            coluna
+            for coluna in base_oficial.columns
+            if str(coluna) == str(ano)
+        ),
+        None,
+    )
+    valor = registro[coluna_ano] if coluna_ano is not None else None
+    status = _texto_oficial(registro, f"STATUS_{ano}")
+    if status is None and _texto_oficial(
+        registro,
+        "APLICABILIDADE",
+    ) == "NAO_APLICAVEL":
+        status = "N/A"
+    return valor, status
+
+
+def _formatar_valor_indicador(
+    valor: Any,
+    unidade: str,
+    status: str | None = None,
+) -> str:
+    status_normalizado = str(status or "").strip().upper()
+    if status_normalizado in {"N/D", "N/A"}:
+        return status_normalizado
+
+    if isinstance(valor, str):
+        sentinela = valor.strip().upper()
+        if sentinela in {"N/D", "N/A"}:
+            return sentinela
+
+    if _eh_ausente(valor):
+        return "N/D"
+
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return str(valor)
+
+    texto = f"{numero:,.2f}"
+    texto = texto.replace(",", "_").replace(".", ",").replace("_", ".")
+    if str(unidade).strip() == "%":
+        percentual = f"{numero * 100:,.2f}"
+        percentual = (
+            percentual.replace(",", "_").replace(".", ",").replace("_", ".")
+        )
+        return percentual + "%"
+    return texto
+
+
+def _montar_tabela_indicadores(
+    indicadores: Mapping[str, Any],
+    layout: str,
+    anos: list[Any],
+    estilos: Mapping[str, ParagraphStyle],
+) -> LongTable:
+    analise = indicadores["ANALISE"]
+    base_oficial = indicadores["BASE_OFICIAL"]
+    esperados = INDICADORES_POR_LAYOUT.get(str(layout).upper())
+    if esperados is None:
+        raise ErroContextoRelatorio(
+            f"Layout sem contrato de indicadores no PDF: {layout}."
+        )
+
+    for nome_quadro, quadro in (
+        ("ANALISE", analise),
+        ("BASE_OFICIAL", base_oficial),
+    ):
+        codigos_disponiveis = (
+            set(quadro["INDICADOR"].dropna().astype(str).tolist())
+            if hasattr(quadro, "columns") and "INDICADOR" in quadro.columns
+            else set()
+        )
+        ausentes = [
+            codigo for codigo in esperados if codigo not in codigos_disponiveis
+        ]
+        if ausentes:
+            raise ErroContextoRelatorio(
+                f"Indicadores oficiais ausentes de {nome_quadro}: "
+                + ", ".join(ausentes)
+            )
+
+    exibir_delta = hasattr(analise, "columns") and "DELTA" in analise.columns
+    cabecalho = [
+        Paragraph("Indicador", estilos["cabecalho_tabela"]),
+        Paragraph("Unidade", estilos["cabecalho_tabela"]),
+        *(
+            Paragraph(escape(str(ano)), estilos["cabecalho_tabela"])
+            for ano in anos
+        ),
+    ]
+    if exibir_delta:
+        cabecalho.append(
+            Paragraph("Variação", estilos["cabecalho_tabela"])
+        )
+
+    dados = [cabecalho]
+    linhas_grupo = []
+    grupo_anterior = None
+
+    for codigo in esperados:
+        registro_analise = _primeiro_registro(analise, codigo)
+        registro_base = _primeiro_registro(base_oficial, codigo)
+        grupo = (
+            _texto_oficial(registro_analise, "GRUPO")
+            or _texto_oficial(registro_base, "GRUPO")
+            or "Indicadores"
+        )
+        if grupo != grupo_anterior:
+            linhas_grupo.append(len(dados))
+            dados.append(
+                [
+                    Paragraph(escape(grupo), estilos["grupo_indicador"]),
+                    *("" for _ in range(len(cabecalho) - 1)),
+                ]
+            )
+            grupo_anterior = grupo
+
+        nome = (
+            _texto_oficial(registro_analise, "NOME")
+            or _texto_oficial(registro_base, "NOME")
+            or codigo
+        )
+        unidade = (
+            _texto_oficial(registro_base, "UNIDADE")
+            or _texto_oficial(registro_analise, "UNIDADE")
+            or ""
+        )
+        linha = [
+            Paragraph(
+                f"{escape(nome)}<br/><font size='6' color='#5F6E86'>"
+                f"{escape(codigo)}</font>",
+                estilos["indicador_tabela"],
+            ),
+            Paragraph(escape(unidade), estilos["numero_tabela"]),
+        ]
+        for ano in anos:
+            valor, status = _valor_indicador_oficial(
+                base_oficial,
+                codigo,
+                ano,
+            )
+            linha.append(
+                Paragraph(
+                    escape(_formatar_valor_indicador(valor, unidade, status)),
+                    estilos["numero_tabela"],
+                )
+            )
+
+        if exibir_delta:
+            delta = (
+                registro_analise["DELTA"]
+                if registro_analise is not None
+                else None
+            )
+            texto_delta = "N/D" if _eh_ausente(delta) else str(delta)
+            linha.append(
+                Paragraph(escape(texto_delta), estilos["numero_tabela"])
+            )
+        dados.append(linha)
+
+    largura_indicador = 52 * mm
+    largura_unidade = 18 * mm
+    largura_delta = 28 * mm if exibir_delta else 0
+    largura_anos = 170 * mm - largura_indicador - largura_unidade - largura_delta
+    largura_ano = largura_anos / max(len(anos), 1)
+    larguras = [largura_indicador, largura_unidade]
+    larguras.extend([largura_ano] * len(anos))
+    if exibir_delta:
+        larguras.append(largura_delta)
+
+    comandos = [
+        ("BACKGROUND", (0, 0), (-1, 0), AZUL_ESCURO),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.35, CINZA_BORDA),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for linha_grupo in linhas_grupo:
+        comandos.extend(
+            [
+                ("SPAN", (0, linha_grupo), (-1, linha_grupo)),
+                ("BACKGROUND", (0, linha_grupo), (-1, linha_grupo), colors.HexColor("#E4EBF3")),
+            ]
+        )
+
+    tabela = LongTable(
+        dados,
+        colWidths=larguras,
+        repeatRows=1,
+        splitByRow=1,
+        hAlign="LEFT",
+    )
+    tabela.setStyle(TableStyle(comandos))
+    return tabela
+
+
+def _adicionar_indicadores(
+    historia: list[Any],
+    indicadores: Mapping[str, Any],
+    layout: str,
+    anos: list[Any],
+    estilos: Mapping[str, ParagraphStyle],
+) -> None:
+    historia.extend(
+        [
+            PageBreak(),
+            Paragraph("Indicadores", estilos["titulo"]),
+            Paragraph(
+                "Valores e variações conforme os objetos oficiais do relatório.",
+                estilos["nota_tabela"],
+            ),
+            _montar_tabela_indicadores(
+                indicadores,
+                layout,
+                anos,
+                estilos,
+            ),
+        ]
+    )
+
+
 def _configurar_metadados(canvas, documento, metadados: Mapping[str, Any]) -> None:
     canvas.setTitle("Relatório Financeiro Profissional")
     canvas.setAuthor("Sistema CVM")
@@ -547,6 +846,13 @@ def gerar_pdf_financeiro(
         ]
     )
     _adicionar_demonstracoes(historia, contexto, estilos)
+    _adicionar_indicadores(
+        historia,
+        contexto["INDICADORES"],
+        identificacao["LAYOUT"],
+        anos,
+        estilos,
+    )
 
     documento.build(
         historia,
