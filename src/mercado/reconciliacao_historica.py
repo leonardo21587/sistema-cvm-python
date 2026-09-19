@@ -89,6 +89,7 @@ def reconciliar_diagnostico(
     instrumentos: Iterable[dict[str, str]],
     registros_fca_por_ano: dict[int, list[FcaValorMobiliario]],
     cd_cvm_sistema: set[str],
+    excecoes_validadas: Iterable[dict[str, str]] = (),
 ) -> list[ResultadoReconciliacaoHistorica]:
     """
     Segunda passada conservadora para um ano histórico.
@@ -102,6 +103,11 @@ def reconciliar_diagnostico(
     instrumentos = list(instrumentos)
     por_chave, por_cd = _indice_catalogo(instrumentos)
     fca = _fca_por_ticker(registros_fca_por_ano)
+    excecao_por_ticker = {
+        linha.get("TICKER", "").strip().upper(): linha
+        for linha in excecoes_validadas
+        if linha.get("TICKER", "").strip()
+    }
 
     saida: list[ResultadoReconciliacaoHistorica] = []
 
@@ -112,6 +118,72 @@ def reconciliar_diagnostico(
         classe_obs = linha.get("CLASSE", "").strip().upper()
         especificacoes = linha.get("ESPECIFICACOES", "")
         id_diag = linha.get("CANDIDATO_INSTRUMENTO_ID", "").strip()
+
+        excecao = excecao_por_ticker.get(ticker)
+        if excecao is not None:
+            status_excecao = excecao.get("STATUS", "").strip().upper()
+            cd_excecao = excecao.get("CD_CVM", "").strip().zfill(6)
+            tipo_excecao = excecao.get("TIPO_ATIVO", "").strip().upper()
+            classe_excecao = excecao.get("CLASSE", "").strip().upper()
+            fonte_excecao = excecao.get("FONTE", "").strip() or "EXCECAO_VALIDADA"
+
+            if status_excecao == "FORA_UNIVERSO_SISTEMA":
+                saida.append(
+                    ResultadoReconciliacaoHistorica(
+                        ticker=ticker,
+                        status="FORA_UNIVERSO_SISTEMA",
+                        cd_cvm=cd_excecao,
+                        tipo_ativo=tipo_excecao or tipo_obs,
+                        classe=classe_excecao or classe_obs,
+                        instrumento_id="",
+                        chave_instrumento="",
+                        fonte=fonte_excecao,
+                        detalhe="exceção documental já validada",
+                    )
+                )
+                continue
+
+            if status_excecao == "RESOLVIDO_EXCECAO_VALIDADA":
+                chave_exc = (
+                    cd_excecao,
+                    tipo_excecao or tipo_obs,
+                    classe_excecao or classe_obs,
+                )
+                ids_exc = por_chave.get(chave_exc, set())
+
+                if len(ids_exc) == 1:
+                    saida.append(
+                        ResultadoReconciliacaoHistorica(
+                            ticker=ticker,
+                            status="ALIAS_EXISTENTE_FORTE",
+                            cd_cvm=cd_excecao,
+                            tipo_ativo=chave_exc[1],
+                            classe=chave_exc[2],
+                            instrumento_id=str(next(iter(ids_exc))),
+                            chave_instrumento="",
+                            fonte=fonte_excecao,
+                            detalhe="exceção documental já validada",
+                        )
+                    )
+                    continue
+
+                if len(ids_exc) > 1:
+                    saida.append(
+                        ResultadoReconciliacaoHistorica(
+                            ticker=ticker,
+                            status="REVISAO_EXCECAO_MULTIPLOS_IDS",
+                            cd_cvm=cd_excecao,
+                            tipo_ativo=chave_exc[1],
+                            classe=chave_exc[2],
+                            instrumento_id="",
+                            chave_instrumento="",
+                            fonte=fonte_excecao,
+                            detalhe="ids=" + "|".join(
+                                str(x) for x in sorted(ids_exc)
+                            ),
+                        )
+                    )
+                    continue
 
         if status_diag == "RESOLVIDO_CATALOGO":
             saida.append(

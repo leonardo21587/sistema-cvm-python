@@ -36,6 +36,19 @@ def main() -> None:
     assert linhas[0]["TICKER"] == "OLD3"
     assert linhas[0]["CHAVE_INSTRUMENTO"] == "000001|ACAO|ON"
 
+    excecao = ResultadoReconciliacaoHistorica(
+        ticker="PPLA11",
+        status="FORA_UNIVERSO_SISTEMA",
+        cd_cvm="080152",
+        tipo_ativo="UNIT",
+        classe="UNIT",
+        instrumento_id="",
+        chave_instrumento="",
+        fonte="FIXTURE",
+        detalhe="exceção validada",
+    )
+    assert serializar_resultados([excecao])[0]["CD_CVM"] == "080152"
+
     print("RESULTADO: APROVADO")
     print("Separação alias existente vs instrumento histórico novo: aprovada")
     print("Nenhum ID é alocado nesta subetapa: aprovado")
