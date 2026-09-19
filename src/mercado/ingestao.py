@@ -40,8 +40,6 @@ CAMPOS_COMPARACAO = (
     "qtd_titulos",
     "volume_financeiro",
     "moeda",
-    "fonte",
-    "arquivo_fonte",
 )
 
 
