@@ -160,12 +160,84 @@ def teste_limites_fca_vs_cotahist():
     assert fim_stale is None
 
 
+def teste_continuidade_isin_retrocede_vigencia():
+    resultado = construir_catalogo_temporal(
+        instrumentos_existentes=[],
+        instrumentos_candidatos=[
+            instrumento(6001, "000001", "ON", "2025-01-02")
+        ],
+        tickers_existentes=[],
+        identificadores_existentes=[],
+        alocacoes=[
+            alocacao("000001", "ON", 6001)
+        ],
+        tickers_reconciliados_2025=[
+            reconciliado(
+                "TEST3", "000001", "ON",
+                "2025-01-02", "2025-12-30"
+            )
+        ],
+        evidencias_fca=[],
+        observacoes_isin=[
+            ObservacaoIsin(
+                date(2024, 1, 2),
+                "TEST3",
+                "BRTESTACNOR1",
+            ),
+            ObservacaoIsin(
+                date(2024, 12, 30),
+                "TEST3",
+                "BRTESTACNOR1",
+            ),
+            ObservacaoIsin(
+                date(2025, 1, 2),
+                "TEST3",
+                "BRTESTACNOR1",
+            ),
+            ObservacaoIsin(
+                date(2025, 12, 30),
+                "TEST3",
+                "BRTESTACNOR1",
+            ),
+        ],
+    )
+
+    assert resultado.gate_aprovado is True
+    assert resultado.revisao == []
+
+    tickers = [
+        x for x in resultado.tickers
+        if x["TICKER"] == "TEST3"
+    ]
+    assert len(tickers) == 1
+    assert tickers[0]["DT_INICIO"] == "2024-01-02"
+    assert (
+        "COTAHIST_2024_2025_ISIN_CONTINUIDADE"
+        in tickers[0]["FONTE"]
+    )
+
+    instrumentos = {
+        int(x["INSTRUMENTO_ID"]): x
+        for x in resultado.instrumentos
+    }
+    assert instrumentos[6001]["DT_INICIO"] == "2024-01-02"
+
+    isins = [
+        x for x in resultado.identificadores
+        if int(x["INSTRUMENTO_ID"]) == 6001
+        and x["VALOR"] == "BRTESTACNOR1"
+    ]
+    assert len(isins) == 1
+    assert isins[0]["DT_INICIO"] == "2024-01-02"
+
+
 def main():
     print("=" * 88)
     print("SISTEMA CVM — TESTE D.4 — VIGÊNCIAS DE TICKER/ISIN")
     print("=" * 88)
 
     teste_limites_fca_vs_cotahist()
+    teste_continuidade_isin_retrocede_vigencia()
 
     existentes = [
         instrumento(3001, "002437", "ON", "2010-01-01"),

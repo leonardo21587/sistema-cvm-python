@@ -337,6 +337,34 @@ def construir_catalogo_temporal(
     evidencias_fca: Iterable[EvidenciaFcaTicker],
     observacoes_isin: Iterable[ObservacaoIsin],
 ) -> ResultadoCatalogoTemporal:
+    observacoes_isin = list(observacoes_isin)
+
+    # O COTAHIST 2024 pode ampliar a vigência de um ticker candidato somente
+    # quando há continuidade observada do MESMO ISIN em 2025. Isso evita usar
+    # a mera repetição textual do ticker como prova de identidade.
+    isins_2025_por_ticker: dict[str, set[str]] = {}
+    for obs in observacoes_isin:
+        if obs.data.year != 2025:
+            continue
+        ticker = obs.ticker.upper()
+        isins_2025_por_ticker.setdefault(ticker, set()).add(
+            obs.isin.upper()
+        )
+
+    primeira_observacao_continua: dict[str, date] = {}
+    for obs in observacoes_isin:
+        if obs.data.year >= 2025:
+            continue
+
+        ticker = obs.ticker.upper()
+        isin = obs.isin.upper()
+        if isin not in isins_2025_por_ticker.get(ticker, set()):
+            continue
+
+        atual = primeira_observacao_continua.get(ticker)
+        if atual is None or obs.data < atual:
+            primeira_observacao_continua[ticker] = obs.data
+
     instrumentos_base = [
         _normalizar_linha_instrumento(x)
         for x in instrumentos_existentes
@@ -484,6 +512,36 @@ def construir_catalogo_temporal(
             linha_ticker=linha,
             evidencias=evidencias,
         )
+
+        inicio_validado = _data_opcional(
+            linha.get("DT_INICIO_VALIDADA", "")
+        )
+        inicio_continuo = primeira_observacao_continua.get(ticker)
+
+        if (
+            inicio_continuo is not None
+            and inicio_validado is not None
+            and inicio_continuo < inicio_validado
+        ):
+            revisao.append(
+                {
+                    "NIVEL": "TICKER",
+                    "CHAVE": ticker,
+                    "DETALHE": (
+                        "COTAHIST_ANTES_INICIO_VALIDADO:"
+                        f"{inicio_continuo}<{inicio_validado}"
+                    ),
+                }
+            )
+            continue
+
+        if (
+            inicio_continuo is not None
+            and inicio_validado is None
+            and inicio_continuo < inicio
+        ):
+            inicio = max(DATA_INICIO_ALVO, inicio_continuo)
+            fonte_inicio = "COTAHIST_2024_2025_ISIN_CONTINUIDADE"
 
         if inicio > primeira:
             revisao.append(
