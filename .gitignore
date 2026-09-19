@@ -54,3 +54,8 @@ dist/
 *_backup.py
 !data/processed/sistema_cvm.duckdb
 data/auditoria/
+
+# Dados de mercado da Fase D (arquivos brutos, staging e relatórios locais)
+data/market/raw/
+data/market/staging/
+data/market/reports/
