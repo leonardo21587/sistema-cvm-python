@@ -383,10 +383,8 @@ def executar(cotahist_2025: Path) -> None:
     tickers_no_sistema = sum(
         1
         for linha in linhas_ticker
-        if linha["STATUS"] in {
-            "PRONTO_PARA_AGRUPAR",
-            "REVISAO",
-        }
+        if linha["CD_CVM"]
+        and linha["CD_CVM"] in sistema
     )
     fora = sum(
         1
@@ -406,7 +404,10 @@ def executar(cotahist_2025: Path) -> None:
     print("SISTEMA CVM — D.4 — UNIVERSO AMPLIADO 2025")
     print("=" * 88)
     print(f"Ações/Units observadas no COTAHIST 2025: {len(resumos):,}")
-    print(f"Tickers ligados às 499 empresas do sistema: {tickers_no_sistema:,}")
+    print(
+        "Tickers com CD_CVM efetivamente ligado às 499 empresas: "
+        f"{tickers_no_sistema:,}"
+    )
     print(f"Tickers fora do universo do sistema: {fora:,}")
     print(f"Grupos econômicos candidatos: {len(grupos):,}")
     print(f"Grupos candidatos aprovados: {grupos_aprovados:,}")
