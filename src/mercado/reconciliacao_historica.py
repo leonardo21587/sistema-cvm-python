@@ -254,10 +254,12 @@ def reconciliar_diagnostico(
         # Para casos fracos/sem evidência, usa FCA adjacente 2022–2024.
         itens = fca.get(ticker, [])
         cds_candidatos: set[str] = set()
+        cds_explicitos_fca: set[str] = set()
 
         for _, registro in itens:
             if registro.cd_cvm:
                 cd = registro.cd_cvm.zfill(6)
+                cds_explicitos_fca.add(cd)
                 if cd in cd_cvm_sistema:
                     cds_candidatos.add(cd)
 
@@ -270,6 +272,30 @@ def reconciliar_diagnostico(
                 cds_candidatos.add(cd_por_cnpj.zfill(6))
 
         cds = sorted(cds_candidatos)
+        cds_fora = sorted(
+            cd
+            for cd in cds_explicitos_fca
+            if cd not in cd_cvm_sistema
+        )
+
+        if not cds and cds_fora:
+            saida.append(
+                ResultadoReconciliacaoHistorica(
+                    ticker=ticker,
+                    status="FORA_UNIVERSO_SISTEMA",
+                    cd_cvm="|".join(cds_fora),
+                    tipo_ativo=tipo_obs,
+                    classe=classe_obs,
+                    instrumento_id="",
+                    chave_instrumento="",
+                    fonte="FCA_GLOBAL_CD_CVM_FORA_SISTEMA",
+                    detalhe=(
+                        "FCA histórico identifica somente CD_CVM fora das "
+                        "499 empresas do universo contábil"
+                    ),
+                )
+            )
+            continue
 
         if len(cds) > 1:
             saida.append(
