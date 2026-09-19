@@ -35,7 +35,7 @@ TICKERS_ESPERADOS_2025 = {
 }
 
 
-def _salvar_relatorio_ano(resultado, raw, caminho):
+def _montar_relatorio_ano(resultado, raw, caminho):
     relatorio = novo_relatorio_ingestao(
         fonte="B3_COTAHIST",
         ano=resultado.ano,
@@ -52,11 +52,7 @@ def _salvar_relatorio_ano(resultado, raw, caminho):
     relatorio.iguais = resultado.iguais
     relatorio.atualizados = resultado.atualizados
     relatorio.substituicoes = resultado.atualizados
-    relatorio.finalizar(status="APROVADO")
-    return salvar_relatorio_ingestao(
-        relatorio,
-        diretorio=REPORTS_DIR,
-    )
+    return relatorio
 
 
 def executar(caminho_2024: Path, caminho_2025: Path) -> None:
@@ -92,6 +88,7 @@ def executar(caminho_2024: Path, caminho_2025: Path) -> None:
         print()
 
         resultados = {}
+        relatorios = {}
         total_mapeado = 0
         falhas = []
 
@@ -111,7 +108,11 @@ def executar(caminho_2024: Path, caminho_2025: Path) -> None:
             resultados[ano] = resultado
             total_mapeado += resultado.linhas_mapeadas
 
-            _salvar_relatorio_ano(resultado, raw, caminho)
+            relatorios[ano] = _montar_relatorio_ano(
+                resultado,
+                raw,
+                caminho,
+            )
 
             print(f"ANO {ano}")
             print("-" * 78)
@@ -209,6 +210,29 @@ def executar(caminho_2024: Path, caminho_2025: Path) -> None:
                 f"identidade={len(gate['falhas_identidade'])}; "
                 f"preços_fora_vigencia={gate['precos_fora_vigencia']}; "
                 f"cd_cvm_ausentes={gate['cd_cvm_ausentes']}."
+            )
+
+        status_final = "BLOQUEADO" if falhas else "APROVADO"
+        observacoes = " | ".join(falhas)
+
+        for ano in ANOS:
+            relatorios[ano].falhas_invariantes = (
+                len(gate["falhas_identidade"])
+                + int(gate["precos_fora_vigencia"])
+                + len(gate["cd_cvm_ausentes"])
+            )
+            relatorios[ano].descontinuidades_sinalizadas = sum(
+                1
+                for item in descontinuidades
+                if item.data_atual.year == ano
+            )
+            relatorios[ano].finalizar(
+                status=status_final,
+                observacoes=observacoes,
+            )
+            salvar_relatorio_ingestao(
+                relatorios[ano],
+                diretorio=REPORTS_DIR,
             )
 
         print("CONSOLIDADO 2024–2025")
