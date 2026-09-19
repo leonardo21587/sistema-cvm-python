@@ -12,7 +12,10 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 
-from src.mercado.classificacao import inferir_tipo_classe  # noqa: E402
+from src.mercado.classificacao import (  # noqa: E402
+    inferir_tipo_classe,
+    instrumento_fca_no_escopo_inicial,
+)
 
 REPORTS_DIR = ROOT_DIR / "data" / "market" / "reports"
 DIAGNOSTICO = REPORTS_DIR / "catalogo_fca_2025_diagnostico.csv"
@@ -85,6 +88,7 @@ def executar() -> None:
         por_ticker[(linha["CD_CVM"], linha["TICKER"])].append(linha)
 
     revisao: list[dict] = []
+    fora_escopo: list[dict] = []
     ticker_normalizado: list[dict] = []
 
     for (cd_cvm, ticker), grupo in sorted(por_ticker.items()):
@@ -111,6 +115,37 @@ def executar() -> None:
                 datas_inicio.append(inicio)
             if fim:
                 datas_fim.append(fim)
+
+        no_escopo = any(
+            instrumento_fca_no_escopo_inicial(
+                ticker=ticker,
+                valor_mobiliario=linha["VALOR_MOBILIARIO"],
+                composicao_unit=linha["COMPOSICAO_BDR_UNIT"],
+                especificacoes_cotahist=linha["ESPECIFICACOES_2025"],
+            )
+            for linha in grupo
+        )
+
+        if not no_escopo:
+            fora_escopo.append(
+                {
+                    "CD_CVM": cd_cvm,
+                    "TICKER": ticker,
+                    "ISIN": "|".join(sorted(isins)),
+                    "VALOR_MOBILIARIO": "|".join(
+                        sorted({
+                            linha["VALOR_MOBILIARIO"]
+                            for linha in grupo
+                            if linha["VALOR_MOBILIARIO"]
+                        })
+                    ),
+                    "ESPECIFICACOES_2025": "|".join(
+                        sorted(especificacoes)
+                    ),
+                    "STATUS": "FORA_ESCOPO_INICIAL",
+                }
+            )
+            continue
 
         problemas = []
         if len(isins) == 0:
@@ -337,6 +372,7 @@ def executar() -> None:
         f"{instrumentos_multi_ticker:,}"
     )
     print(f"Instrumentos promovíveis como candidatos: {len(candidatos):,}")
+    print(f"Tickers fora do escopo inicial: {len(fora_escopo):,}")
     print(f"Itens para revisão: {len(revisao):,}")
     print()
 
@@ -392,6 +428,21 @@ def executar() -> None:
                 f"{linha['CD_CVM']} | {linha['ISIN']} | "
                 f"{linha['TICKERS_2025']}"
             )
+        print()
+
+    if fora_escopo:
+        print("FORA DO ESCOPO INICIAL — NÃO É ERRO")
+        print("-" * 78)
+        for linha in fora_escopo[:30]:
+            print(
+                f"{linha['CD_CVM']:12s} | "
+                f"{linha['TICKER']:16s} | "
+                f"{linha['ISIN']:14s} | "
+                f"{linha['VALOR_MOBILIARIO']} | "
+                f"{linha['ESPECIFICACOES_2025']}"
+            )
+        if len(fora_escopo) > 30:
+            print(f"... e mais {len(fora_escopo) - 30} item(ns).")
         print()
 
     if revisao:
