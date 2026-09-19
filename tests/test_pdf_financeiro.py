@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 from copy import deepcopy
 import re
 import sys
 from pathlib import Path
 
 import pandas as pd
+import plotly.graph_objects as go
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -17,16 +19,27 @@ if str(ROOT_DIR) not in sys.path:
 from src.contexto_relatorio import (  # noqa: E402
     montar_contexto_relatorio,
 )
+from src.graficos import (  # noqa: E402
+    montar_graficos_financeiros_setoriais,
+)
 from src.pdf_financeiro import (  # noqa: E402
+    FIGURAS_PERMITIDAS_POR_LAYOUT,
     INDICADORES_POR_LAYOUT,
     MIME_PDF,
     PeriodoInsuficientePDF,
     _estilos,
     _formatar_valor_indicador,
     _formatar_valor_demonstracao,
+    _figura_para_png,
     _montar_tabela_indicadores,
     _montar_tabela_demonstracao,
     gerar_pdf_financeiro,
+)
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+    "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
@@ -491,13 +504,88 @@ def testar_indicadores_por_layout_sem_recalculo() -> None:
         )
 
 
+def testar_graficos_financeiros_sem_recalculo() -> None:
+    anos = [2023, 2024, 2025]
+    base = _indicadores_oficiais(
+        "FINANCEIRA",
+        anos,
+    )["BASE_OFICIAL"]
+    original = base.copy(deep=True)
+    graficos = montar_graficos_financeiros_setoriais(base, anos)
+
+    assert set(graficos) == {
+        "capitalizacao_funding",
+        "crescimento",
+        "intermediacao",
+    }
+    assert [
+        traco.name
+        for traco in graficos["capitalizacao_funding"].data
+    ] == ["CAP_CONTABIL", "PF_ATIVO"]
+    assert [
+        traco.name
+        for traco in graficos["crescimento"].data
+    ] == ["CRESC_ATIVO", "CRESC_PL", "CRESC_LL"]
+    assert [
+        traco.name
+        for traco in graficos["intermediacao"].data
+    ] == ["RBI_ATIVO_MEDIO", "PRETRIB_ATIVO_MEDIO"]
+
+    crescimento = {
+        traco.name: traco
+        for traco in graficos["crescimento"].data
+    }
+    assert pd.isna(crescimento["CRESC_ATIVO"].y[0])
+    assert "2023" not in crescimento["CRESC_PL"].x
+    assert crescimento["CRESC_LL"].y[0] == 5.0
+    pd.testing.assert_frame_equal(base, original, check_flags=True)
+
+
+def testar_figuras_no_pdf_por_layout() -> None:
+    figura = go.Figure(
+        go.Scatter(
+            x=["2023", "2024", "2025"],
+            y=[1.0, None, -2.0],
+            mode="lines+markers",
+        )
+    )
+    png = _figura_para_png(figura)
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+    proibida_por_layout = {
+        "PADRAO": "capitalizacao_funding",
+        "FINANCEIRA": "estrutura",
+    }
+    for layout in ("PADRAO", "FINANCEIRA"):
+        objetos = _objetos_oficiais(layout, [2023, 2024, 2025])
+        objetos["figuras"] = {
+            chave: PNG_1X1
+            for chave in FIGURAS_PERMITIDAS_POR_LAYOUT[layout]
+        }
+        objetos["figuras"][proibida_por_layout[layout]] = b"INVALIDO"
+        contexto = montar_contexto_relatorio(
+            **objetos,
+            modalidade="EXECUTIVO_ANALISTA",
+        )
+        resultado = gerar_pdf_financeiro(
+            contexto,
+            "EXECUTIVO_ANALISTA",
+        )
+        assert resultado["conteudo"].startswith(b"%PDF-")
+        assert len(
+            re.findall(rb"/Type\s*/Page(?!s)", resultado["conteudo"])
+        ) >= 8
+
+
 def main() -> None:
     testar_contexto_temporal_e_sentinelas()
     testar_pdf_minimo_por_layout()
     testar_demonstracoes_sem_recalculo_ou_mutacao()
     testar_formatacao_e_tabela_multipagina()
     testar_indicadores_por_layout_sem_recalculo()
-    print("RESULTADO: APROVADO - indicadores no PDF da C.4.")
+    testar_graficos_financeiros_sem_recalculo()
+    testar_figuras_no_pdf_por_layout()
+    print("RESULTADO: APROVADO - gráficos no PDF da C.5.")
 
 
 if __name__ == "__main__":

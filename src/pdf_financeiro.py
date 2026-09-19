@@ -7,12 +7,14 @@ import re
 import unicodedata
 from typing import Any, Mapping
 
+import kaleido
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
+    Image as ImagemReportLab,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -51,6 +53,22 @@ INDICADORES_POR_LAYOUT = {
         "CAP_CONTABIL", "PF_ATIVO", "CRESC_ATIVO", "CRESC_PL",
         "CRESC_LL", "RBI_ATIVO_MEDIO", "PRETRIB_ATIVO_MEDIO",
         "ROA", "ROE",
+    ],
+}
+
+FIGURAS_PERMITIDAS_POR_LAYOUT = {
+    "PADRAO": [
+        "estrutura",
+        "liquidez",
+        "icj",
+        "rentabilidade",
+        "ga",
+    ],
+    "FINANCEIRA": [
+        "capitalizacao_funding",
+        "crescimento",
+        "intermediacao",
+        "rentabilidade",
     ],
 }
 
@@ -719,6 +737,102 @@ def _adicionar_indicadores(
     )
 
 
+def _figura_para_png(figura: Any) -> bytes:
+    if isinstance(figura, (bytes, bytearray)):
+        conteudo = bytes(figura)
+    elif hasattr(figura, "to_image"):
+        try:
+            conteudo = kaleido.calc_fig_sync(
+                figura,
+                opts={
+                    "format": "png",
+                    "width": 1200,
+                    "height": 620,
+                    "scale": 1,
+                },
+            )
+        except Exception as erro:
+            raise ErroContextoRelatorio(
+                "Não foi possível converter uma figura oficial para PNG."
+            ) from erro
+    else:
+        raise ErroContextoRelatorio(
+            "FIGURAS deve conter bytes PNG ou figuras exportáveis."
+        )
+
+    if not conteudo.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ErroContextoRelatorio(
+            "A figura oficial não produziu um PNG válido."
+        )
+    return conteudo
+
+
+def _adicionar_figuras(
+    historia: list[Any],
+    figuras: Mapping[str, Any],
+    layout: str,
+    estilos: Mapping[str, ParagraphStyle],
+) -> None:
+    permitidas = FIGURAS_PERMITIDAS_POR_LAYOUT.get(str(layout).upper())
+    if permitidas is None:
+        raise ErroContextoRelatorio(
+            f"Layout sem contrato de figuras no PDF: {layout}."
+        )
+
+    selecionadas = []
+    for chave in permitidas:
+        figura = figuras.get(chave)
+        if figura is None:
+            continue
+        dados = getattr(figura, "data", None)
+        if dados is not None and len(dados) == 0:
+            continue
+        selecionadas.append(figura)
+
+    imagens = []
+    usar_kaleido = any(
+        not isinstance(figura, (bytes, bytearray))
+        for figura in selecionadas
+    )
+    if usar_kaleido:
+        kaleido.start_sync_server()
+    try:
+        for figura in selecionadas:
+            imagens.append(
+                ImagemReportLab(
+                    BytesIO(_figura_para_png(figura)),
+                    width=170 * mm,
+                    height=(170 * 620 / 1200) * mm,
+                )
+            )
+    finally:
+        if usar_kaleido:
+            kaleido.stop_sync_server()
+
+    if not imagens:
+        return
+
+    historia.extend(
+        [
+            PageBreak(),
+            Paragraph("Gráficos", estilos["titulo"]),
+            Paragraph(
+                "Evolução dos indicadores oficiais no período analisado.",
+                estilos["nota_tabela"],
+            ),
+        ]
+    )
+    for indice, imagem in enumerate(imagens):
+        if indice and indice % 2 == 0:
+            historia.extend(
+                [
+                    PageBreak(),
+                    Paragraph("Gráficos - continuação", estilos["titulo"]),
+                ]
+            )
+        historia.extend([imagem, Spacer(1, 4 * mm)])
+
+
 def _configurar_metadados(canvas, documento, metadados: Mapping[str, Any]) -> None:
     canvas.setTitle("Relatório Financeiro Profissional")
     canvas.setAuthor("Sistema CVM")
@@ -851,6 +965,12 @@ def gerar_pdf_financeiro(
         contexto["INDICADORES"],
         identificacao["LAYOUT"],
         anos,
+        estilos,
+    )
+    _adicionar_figuras(
+        historia,
+        contexto["FIGURAS"],
+        identificacao["LAYOUT"],
         estilos,
     )
 

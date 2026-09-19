@@ -75,6 +75,38 @@ GRUPOS_DASHBOARD = {
 }
 
 
+NOMES_FINANCEIROS_SETORIAIS = {
+    "CAP_CONTABIL": "Capitalização Contábil",
+    "PF_ATIVO": "Passivos Financeiros / Ativo Total",
+    "CRESC_ATIVO": "Crescimento do Ativo Total",
+    "CRESC_PL": "Crescimento do Patrimônio Líquido",
+    "CRESC_LL": "Crescimento do Lucro Líquido",
+    "RBI_ATIVO_MEDIO": (
+        "Resultado Bruto da Intermediação / Ativo Médio"
+    ),
+    "PRETRIB_ATIVO_MEDIO": (
+        "Resultado Pré-Tributos / Ativo Médio"
+    ),
+}
+
+
+GRUPOS_GRAFICOS_FINANCEIROS = {
+    "capitalizacao_funding": [
+        "CAP_CONTABIL",
+        "PF_ATIVO",
+    ],
+    "crescimento": [
+        "CRESC_ATIVO",
+        "CRESC_PL",
+        "CRESC_LL",
+    ],
+    "intermediacao": [
+        "RBI_ATIVO_MEDIO",
+        "PRETRIB_ATIVO_MEDIO",
+    ],
+}
+
+
 # ============================================================
 # UTILITÁRIOS
 # ============================================================
@@ -496,6 +528,229 @@ def preparar_series_grafico(
     return pd.DataFrame(
         registros
     )
+
+
+def _preparar_series_financeiras(
+    quadro: pd.DataFrame,
+    codigos: list[str],
+    anos: list[int] | tuple[int, ...] | None = None,
+) -> pd.DataFrame:
+    colunas_obrigatorias = {
+        "ANO",
+        "INDICADOR",
+        "VALOR",
+        "STATUS",
+    }
+    faltantes = colunas_obrigatorias.difference(quadro.columns)
+    if faltantes:
+        raise ValueError(
+            "Base financeira sem colunas obrigatórias: "
+            + ", ".join(sorted(faltantes))
+        )
+
+    anos_disponiveis = sorted(
+        {
+            int(ano)
+            for ano in pd.to_numeric(
+                quadro["ANO"],
+                errors="coerce",
+            ).dropna()
+        }
+    )
+    anos_usados = (
+        anos_disponiveis
+        if anos is None
+        else [
+            int(ano)
+            for ano in anos
+            if int(ano) in anos_disponiveis
+        ]
+    )
+    registros = []
+
+    for codigo in codigos:
+        if codigo not in NOMES_FINANCEIROS_SETORIAIS:
+            raise ValueError(
+                f"Indicador financeiro inválido para gráfico: {codigo}"
+            )
+
+        for ano in anos_usados:
+            linhas = quadro.loc[
+                quadro["INDICADOR"].astype(str).eq(codigo)
+                & pd.to_numeric(
+                    quadro["ANO"],
+                    errors="coerce",
+                ).eq(ano)
+            ]
+            if len(linhas) > 1:
+                raise RuntimeError(
+                    "Indicador financeiro duplicado no período: "
+                    f"{codigo}/{ano}"
+                )
+            if linhas.empty:
+                valor_grafico = None
+            else:
+                linha = linhas.iloc[0]
+                status = str(linha["STATUS"]).strip().upper()
+                if status == "N/A":
+                    continue
+                valor = _numero(linha["VALOR"])
+                valor_grafico = (
+                    None
+                    if status == "N/D" or valor is None
+                    else valor * 100
+                )
+
+            registros.append(
+                {
+                    "ANO": ano,
+                    "INDICADOR": codigo,
+                    "NOME": NOMES_FINANCEIROS_SETORIAIS[codigo],
+                    "VALOR_GRAFICO": valor_grafico,
+                }
+            )
+
+    return pd.DataFrame(registros)
+
+
+def _grafico_financeiro_setorial(
+    quadro: pd.DataFrame,
+    codigos: list[str],
+    anos: list[int] | tuple[int, ...] | None,
+    titulo: str,
+) -> go.Figure:
+    dados = _preparar_series_financeiras(
+        quadro,
+        codigos,
+        anos,
+    )
+    fig = go.Figure()
+    anos_usados = (
+        sorted(dados["ANO"].dropna().astype(int).unique().tolist())
+        if not dados.empty
+        else []
+    )
+
+    for codigo in codigos:
+        parte = (
+            dados.loc[dados["INDICADOR"].eq(codigo)]
+            if not dados.empty
+            else pd.DataFrame()
+        )
+        if parte.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=parte["ANO"].astype(str).tolist(),
+                y=parte["VALOR_GRAFICO"].tolist(),
+                mode="lines+markers",
+                name=codigo,
+                customdata=[
+                    NOMES_FINANCEIROS_SETORIAIS[codigo]
+                    for _ in range(len(parte))
+                ],
+                hovertemplate=(
+                    "<b>%{customdata}</b><br>"
+                    "Ano: %{x}<br>"
+                    "Valor: %{y:.2f}%"
+                    "<extra></extra>"
+                ),
+                connectgaps=False,
+            )
+        )
+
+    fig.update_layout(
+        title={
+            "text": titulo,
+            "x": 0,
+            "xanchor": "left",
+        },
+        template="plotly_white",
+        height=390,
+        margin={
+            "l": 40,
+            "r": 20,
+            "t": 65,
+            "b": 45,
+        },
+        hovermode="x unified",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "left",
+            "x": 0,
+        },
+        xaxis={
+            "title": "",
+            "type": "category",
+            "categoryorder": "array",
+            "categoryarray": [str(ano) for ano in anos_usados],
+            "showgrid": False,
+        },
+        yaxis={
+            "title": "Percentual",
+            "ticksuffix": "%",
+            "rangemode": "tozero",
+        },
+    )
+    return fig
+
+
+def grafico_capitalizacao_funding(
+    quadro: pd.DataFrame,
+    anos: list[int] | tuple[int, ...] | None = None,
+) -> go.Figure:
+    return _grafico_financeiro_setorial(
+        quadro,
+        GRUPOS_GRAFICOS_FINANCEIROS["capitalizacao_funding"],
+        anos,
+        "Capitalização e Funding",
+    )
+
+
+def grafico_crescimento_financeiro(
+    quadro: pd.DataFrame,
+    anos: list[int] | tuple[int, ...] | None = None,
+) -> go.Figure:
+    return _grafico_financeiro_setorial(
+        quadro,
+        GRUPOS_GRAFICOS_FINANCEIROS["crescimento"],
+        anos,
+        "Crescimento",
+    )
+
+
+def grafico_intermediacao_financeira(
+    quadro: pd.DataFrame,
+    anos: list[int] | tuple[int, ...] | None = None,
+) -> go.Figure:
+    return _grafico_financeiro_setorial(
+        quadro,
+        GRUPOS_GRAFICOS_FINANCEIROS["intermediacao"],
+        anos,
+        "Intermediação",
+    )
+
+
+def montar_graficos_financeiros_setoriais(
+    quadro: pd.DataFrame,
+    anos: list[int] | tuple[int, ...] | None = None,
+) -> dict[str, go.Figure]:
+    return {
+        "capitalizacao_funding": grafico_capitalizacao_funding(
+            quadro,
+            anos,
+        ),
+        "crescimento": grafico_crescimento_financeiro(
+            quadro,
+            anos,
+        ),
+        "intermediacao": grafico_intermediacao_financeira(
+            quadro,
+            anos,
+        ),
+    }
 
 
 # ============================================================
