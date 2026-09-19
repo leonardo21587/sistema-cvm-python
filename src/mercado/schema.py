@@ -96,6 +96,71 @@ CREATE TABLE IF NOT EXISTS tickers_historico (
 )
 """
 
+DDL_PRECOS_DIARIOS = """
+CREATE TABLE IF NOT EXISTS precos_diarios (
+    INSTRUMENTO_ID BIGINT NOT NULL,
+    DATA DATE NOT NULL,
+    TICKER_ORIGEM VARCHAR NOT NULL,
+    ABERTURA DECIMAL(20,6),
+    MAXIMA DECIMAL(20,6),
+    MINIMA DECIMAL(20,6),
+    PRECO_MEDIO DECIMAL(20,6),
+    FECHAMENTO DECIMAL(20,6),
+    QTD_NEGOCIOS BIGINT,
+    QTD_TITULOS BIGINT,
+    VOLUME_FINANCEIRO DECIMAL(24,2),
+    MOEDA VARCHAR NOT NULL,
+    FONTE VARCHAR NOT NULL,
+    ARQUIVO_FONTE VARCHAR NOT NULL,
+    COLETADO_EM TIMESTAMP NOT NULL,
+
+    PRIMARY KEY (INSTRUMENTO_ID, DATA),
+    FOREIGN KEY (INSTRUMENTO_ID)
+        REFERENCES instrumentos(INSTRUMENTO_ID),
+    CHECK (length(TICKER_ORIGEM) BETWEEN 1 AND 12),
+    CHECK (regexp_full_match(MOEDA, '[A-Z]{3}'))
+)
+"""
+
+DDL_PRECOS_SUBSTITUICOES = """
+CREATE TABLE IF NOT EXISTS precos_substituicoes (
+    INSTRUMENTO_ID BIGINT NOT NULL,
+    DATA DATE NOT NULL,
+
+    TICKER_ORIGEM_ANTERIOR VARCHAR NOT NULL,
+    ABERTURA_ANTERIOR DECIMAL(20,6),
+    MAXIMA_ANTERIOR DECIMAL(20,6),
+    MINIMA_ANTERIOR DECIMAL(20,6),
+    PRECO_MEDIO_ANTERIOR DECIMAL(20,6),
+    FECHAMENTO_ANTERIOR DECIMAL(20,6),
+    QTD_NEGOCIOS_ANTERIOR BIGINT,
+    QTD_TITULOS_ANTERIOR BIGINT,
+    VOLUME_FINANCEIRO_ANTERIOR DECIMAL(24,2),
+    MOEDA_ANTERIOR VARCHAR NOT NULL,
+    FONTE_ANTERIOR VARCHAR NOT NULL,
+    ARQUIVO_FONTE_ANTERIOR VARCHAR NOT NULL,
+
+    TICKER_ORIGEM_NOVO VARCHAR NOT NULL,
+    ABERTURA_NOVO DECIMAL(20,6),
+    MAXIMA_NOVO DECIMAL(20,6),
+    MINIMA_NOVO DECIMAL(20,6),
+    PRECO_MEDIO_NOVO DECIMAL(20,6),
+    FECHAMENTO_NOVO DECIMAL(20,6),
+    QTD_NEGOCIOS_NOVO BIGINT,
+    QTD_TITULOS_NOVO BIGINT,
+    VOLUME_FINANCEIRO_NOVO DECIMAL(24,2),
+    MOEDA_NOVO VARCHAR NOT NULL,
+    FONTE_NOVO VARCHAR NOT NULL,
+    ARQUIVO_FONTE_NOVO VARCHAR NOT NULL,
+
+    SUBSTITUIDO_EM TIMESTAMP NOT NULL,
+    MOTIVO VARCHAR NOT NULL,
+
+    FOREIGN KEY (INSTRUMENTO_ID)
+        REFERENCES instrumentos(INSTRUMENTO_ID)
+)
+"""
+
 
 def conectar_mercado(
     database: DatabaseTarget | None = None,
@@ -127,25 +192,59 @@ def criar_schema_identidade(
 ) -> None:
     """
     Cria somente o schema estrutural da D.2.
-
-    Nao cria precos, proventos, eventos, benchmarks nem altera
-    sistema_cvm.duckdb.
     """
     con.execute(DDL_INSTRUMENTOS)
     con.execute(DDL_IDENTIFICADORES)
     con.execute(DDL_TICKERS)
 
 
+def criar_schema_precos(
+    con: duckdb.DuckDBPyConnection,
+) -> None:
+    """
+    Cria as estruturas de preços da D.3.
+
+    Requer que o schema de identidade já exista.
+    """
+    con.execute(DDL_PRECOS_DIARIOS)
+    con.execute(DDL_PRECOS_SUBSTITUICOES)
+
+
+def criar_schema_mercado(
+    con: duckdb.DuckDBPyConnection,
+) -> None:
+    """
+    Cria o schema mínimo acumulado das fases D.2 e D.3.
+    """
+    criar_schema_identidade(con)
+    criar_schema_precos(con)
+
+
 def criar_banco_identidade(
     database: DatabaseTarget | None = None,
 ) -> Path:
     """
-    Cria/atualiza as tabelas D.2 no banco Mercado persistente.
+    Cria/atualiza apenas as tabelas D.2 no banco Mercado persistente.
     """
     alvo = Path(database) if database is not None else MERCADO_DUCKDB
     con = conectar_mercado(alvo, read_only=False)
     try:
         criar_schema_identidade(con)
+    finally:
+        con.close()
+    return alvo
+
+
+def criar_banco_mercado(
+    database: DatabaseTarget | None = None,
+) -> Path:
+    """
+    Cria/atualiza o schema mínimo acumulado D.2 + D.3.
+    """
+    alvo = Path(database) if database is not None else MERCADO_DUCKDB
+    con = conectar_mercado(alvo, read_only=False)
+    try:
+        criar_schema_mercado(con)
     finally:
         con.close()
     return alvo
