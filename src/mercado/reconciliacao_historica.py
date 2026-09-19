@@ -311,8 +311,24 @@ def reconciliar_diagnostico(
         # adjacentes são mantidos para revisão, nunca resolvidos por maioria.
         classes: set[tuple[str, str]] = set()
         for _, registro in itens:
-            if not registro.cd_cvm or registro.cd_cvm.zfill(6) != cd:
+            cd_registro = (
+                registro.cd_cvm.zfill(6)
+                if registro.cd_cvm
+                else ""
+            )
+            if not cd_registro:
+                cnpj = "".join(
+                    ch for ch in str(registro.cnpj or "")
+                    if ch.isdigit()
+                ).zfill(14)
+                cd_registro = cnpj_sistema_para_cd_cvm.get(
+                    cnpj,
+                    "",
+                ).zfill(6) if cnpj else ""
+
+            if cd_registro != cd:
                 continue
+
             tipo, classe = inferir_tipo_classe(
                 ticker=ticker,
                 valor_mobiliario=registro.valor_mobiliario,
