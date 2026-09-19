@@ -173,7 +173,7 @@ def promover_catalogo(
         backup_dir.mkdir(parents=True)
 
         for nome in ARQUIVOS_CATALOGO:
-            shutil.copy2(
+            shutil.copyfile(
                 reference_dir / nome,
                 backup_dir / nome,
             )

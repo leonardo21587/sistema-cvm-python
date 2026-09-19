@@ -226,28 +226,48 @@ def main() -> None:
             f"Vigências de ticker fora do instrumento: {ticker_fora}",
         )
 
-        isin_fora = int(
-            con.execute(
-                """
-                SELECT COUNT(*)
-                FROM instrumentos_identificadores x
-                JOIN instrumentos i USING (INSTRUMENTO_ID)
-                WHERE x.DT_INICIO < i.DT_INICIO
-                   OR (
-                        i.DT_FIM IS NOT NULL
-                        AND (
-                            x.DT_FIM IS NULL
-                            OR x.DT_FIM > i.DT_FIM
-                        )
-                   )
-                """
-            ).fetchone()[0]
-        )
-        _falha(
-            falhas,
-            isin_fora == 0,
-            f"Vigências de ISIN fora do instrumento: {isin_fora}",
-        )
+        isins_fora = con.execute(
+            """
+            SELECT
+                x.INSTRUMENTO_ID,
+                x.VALOR,
+                x.DT_INICIO,
+                x.DT_FIM,
+                i.DT_INICIO AS INSTRUMENTO_INICIO,
+                i.DT_FIM AS INSTRUMENTO_FIM
+            FROM instrumentos_identificadores x
+            JOIN instrumentos i USING (INSTRUMENTO_ID)
+            WHERE x.DT_INICIO < i.DT_INICIO
+               OR (
+                    i.DT_FIM IS NOT NULL
+                    AND (
+                        x.DT_FIM IS NULL
+                        OR x.DT_FIM > i.DT_FIM
+                    )
+               )
+            ORDER BY x.INSTRUMENTO_ID, x.DT_INICIO, x.VALOR
+            """
+        ).fetchall()
+        if isins_fora:
+            falhas.append(
+                "Vigências de ISIN fora do instrumento: "
+                f"{len(isins_fora)}"
+            )
+            for (
+                instrumento_id,
+                valor,
+                inicio_isin,
+                fim_isin,
+                inicio_instrumento,
+                fim_instrumento,
+            ) in isins_fora:
+                falhas.append(
+                    "  ISIN_FORA | "
+                    f"ID={instrumento_id} | {valor} | "
+                    f"ISIN=[{inicio_isin},{fim_isin}) | "
+                    f"INSTRUMENTO=[{inicio_instrumento},"
+                    f"{fim_instrumento})"
+                )
 
         # ISINs distintos simultâneos no mesmo instrumento são bloqueantes.
         isin_sobreposto = int(

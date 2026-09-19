@@ -858,6 +858,10 @@ def construir_catalogo_temporal(
         instrumentos_ajustados,
         key=lambda x: int(x["INSTRUMENTO_ID"]),
     )
+    instrumento_por_id = {
+        int(x["INSTRUMENTO_ID"]): x
+        for x in instrumentos
+    }
 
     # ISIN: somente evidência observada nos COTAHIST já liberados (2024/2025).
     observacoes_por_id_isin: dict[
@@ -944,6 +948,58 @@ def construir_catalogo_temporal(
                 else None
             )
 
+            instrumento = instrumento_por_id.get(instrumento_id)
+            if instrumento is None:
+                revisao.append(
+                    {
+                        "NIVEL": "ISIN",
+                        "CHAVE": f"{instrumento_id}|{isin}",
+                        "DETALHE": "INSTRUMENTO_AUSENTE",
+                    }
+                )
+                continue
+
+            inicio_instrumento = _data(instrumento["DT_INICIO"])
+            fim_instrumento = _data_opcional(
+                instrumento.get("DT_FIM", "")
+            )
+
+            if primeira < inicio_instrumento:
+                revisao.append(
+                    {
+                        "NIVEL": "ISIN",
+                        "CHAVE": f"{instrumento_id}|{isin}",
+                        "DETALHE": (
+                            "ISIN_INICIA_ANTES_INSTRUMENTO:"
+                            f"{primeira}<{inicio_instrumento}"
+                        ),
+                    }
+                )
+                continue
+
+            fim_isin = proximo_inicio
+            if (
+                fim_instrumento is not None
+                and (
+                    fim_isin is None
+                    or fim_instrumento < fim_isin
+                )
+            ):
+                fim_isin = fim_instrumento
+
+            if fim_isin is not None and not ultima < fim_isin:
+                revisao.append(
+                    {
+                        "NIVEL": "ISIN",
+                        "CHAVE": f"{instrumento_id}|{isin}",
+                        "DETALHE": (
+                            "FIM_ISIN_NAO_COBRE_ULTIMA_OBSERVACAO:"
+                            f"{fim_isin}<={ultima}"
+                        ),
+                    }
+                )
+                continue
+
             identificadores.append(
                 {
                     "INSTRUMENTO_ID": str(instrumento_id),
@@ -951,8 +1007,8 @@ def construir_catalogo_temporal(
                     "VALOR": isin,
                     "DT_INICIO": primeira.isoformat(),
                     "DT_FIM": (
-                        proximo_inicio.isoformat()
-                        if proximo_inicio is not None
+                        fim_isin.isoformat()
+                        if fim_isin is not None
                         else ""
                     ),
                     "FONTE": "B3_COTAHIST_2024_2025",
@@ -960,6 +1016,56 @@ def construir_catalogo_temporal(
             )
 
     identificadores = _ordenar_identificadores(identificadores)
+
+    # Todo identificador temporal deve estar contido na vida analítica
+    # do instrumento. Este invariante roda antes da promoção.
+    for linha in identificadores:
+        instrumento_id = int(linha["INSTRUMENTO_ID"])
+        instrumento = instrumento_por_id.get(instrumento_id)
+        if instrumento is None:
+            revisao.append(
+                {
+                    "NIVEL": "ISIN",
+                    "CHAVE": f"{instrumento_id}|{linha['VALOR']}",
+                    "DETALHE": "INSTRUMENTO_AUSENTE_NO_CATALOGO",
+                }
+            )
+            continue
+
+        inicio_identificador = _data(linha["DT_INICIO"])
+        fim_identificador = _data_opcional(linha.get("DT_FIM", ""))
+        inicio_instrumento = _data(instrumento["DT_INICIO"])
+        fim_instrumento = _data_opcional(instrumento.get("DT_FIM", ""))
+
+        if inicio_identificador < inicio_instrumento:
+            revisao.append(
+                {
+                    "NIVEL": "ISIN",
+                    "CHAVE": f"{instrumento_id}|{linha['VALOR']}",
+                    "DETALHE": (
+                        "INICIO_FORA_INSTRUMENTO:"
+                        f"{inicio_identificador}<{inicio_instrumento}"
+                    ),
+                }
+            )
+
+        if (
+            fim_instrumento is not None
+            and (
+                fim_identificador is None
+                or fim_identificador > fim_instrumento
+            )
+        ):
+            revisao.append(
+                {
+                    "NIVEL": "ISIN",
+                    "CHAVE": f"{instrumento_id}|{linha['VALOR']}",
+                    "DETALHE": (
+                        "FIM_FORA_INSTRUMENTO:"
+                        f"{fim_identificador}>{fim_instrumento}"
+                    ),
+                }
+            )
 
     # Não permite dois ISINs diferentes simultâneos no mesmo instrumento.
     por_id_isin = {}

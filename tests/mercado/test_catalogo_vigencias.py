@@ -160,6 +160,58 @@ def teste_limites_fca_vs_cotahist():
     assert fim_stale is None
 
 
+def teste_isin_e_limitado_ao_fim_do_instrumento():
+    resultado = construir_catalogo_temporal(
+        instrumentos_existentes=[],
+        instrumentos_candidatos=[
+            instrumento(
+                6200, "000003", "ON",
+                "2025-01-02", "2025-09-23", "ENCERRADO"
+            )
+        ],
+        tickers_existentes=[],
+        identificadores_existentes=[],
+        alocacoes=[
+            alocacao("000003", "ON", 6200)
+        ],
+        tickers_reconciliados_2025=[
+            reconciliado(
+                "ENDD3", "000003", "ON",
+                "2025-01-02", "2025-09-22"
+            )
+        ],
+        evidencias_fca=[
+            evidencia(
+                2025, "ENDD3", "000003",
+                date(2020, 1, 1), date(2025, 9, 22)
+            )
+        ],
+        observacoes_isin=[
+            ObservacaoIsin(
+                date(2025, 1, 2), "ENDD3", "BRENDDACNOR1"
+            ),
+            ObservacaoIsin(
+                date(2025, 9, 22), "ENDD3", "BRENDDACNOR1"
+            ),
+        ],
+    )
+
+    assert resultado.gate_aprovado is True
+    assert resultado.revisao == []
+
+    instrumento_final = {
+        int(x["INSTRUMENTO_ID"]): x
+        for x in resultado.instrumentos
+    }[6200]
+    assert instrumento_final["DT_FIM"] == "2025-09-23"
+
+    isin = [
+        x for x in resultado.identificadores
+        if int(x["INSTRUMENTO_ID"]) == 6200
+    ][0]
+    assert isin["DT_FIM"] == "2025-09-23"
+
+
 def teste_sucessor_multiticker_nao_herda_inicio_fca_antigo():
     resultado = construir_catalogo_temporal(
         instrumentos_existentes=[],
@@ -298,6 +350,7 @@ def main():
     print("=" * 88)
 
     teste_limites_fca_vs_cotahist()
+    teste_isin_e_limitado_ao_fim_do_instrumento()
     teste_sucessor_multiticker_nao_herda_inicio_fca_antigo()
     teste_continuidade_isin_retrocede_vigencia()
 
