@@ -3,6 +3,10 @@ from __future__ import annotations
 import pandas as pd
 
 from src.indicadores import (
+    FORMULAS as FORMULAS_INDICADORES,
+    GRUPOS as GRUPOS_INDICADORES,
+    ORDEM_INDICADORES,
+    UNIDADES as UNIDADES_INDICADORES,
     quadro_indicadores,
     validar_dupont,
 )
@@ -71,6 +75,44 @@ CONTEXTUAIS = {
     "CE",
     "EFSAT",
 }
+
+
+def _metodologia_padrao(
+    ano_base: int,
+) -> dict[str, object]:
+    indicadores = pd.DataFrame(
+        [
+            {
+                "INDICADOR": codigo,
+                "NOME": NOMES[codigo],
+                "GRUPO": GRUPOS_INDICADORES[codigo],
+                "UNIDADE": UNIDADES_INDICADORES[codigo],
+                "FORMULA": FORMULAS_INDICADORES[codigo],
+            }
+            for codigo in ORDEM_INDICADORES
+        ]
+    )
+
+    return {
+        "LAYOUT": "PADRAO",
+        "ANALISE_VERTICAL": [
+            "BP Ativo: rubrica / Ativo Total.",
+            "BP Passivo: rubrica / Passivo Total.",
+            "DRE: rubrica / Receita Líquida.",
+        ],
+        "ANALISE_HORIZONTAL": [
+            "Índice de base fixa.",
+            f"Ano-base = {ano_base} = 100.",
+            "O ano-base não exibe AH.",
+            "Base zero ou ausente = N/D.",
+        ],
+        "INDICADORES": indicadores,
+        "DUPONT": "ROA = GA × RSV.",
+        "REGRAS": [
+            "Dado ausente não é convertido em zero.",
+            "Contas agregadas usam somente os CD_CONTA definidos metodologicamente.",
+        ],
+    }
 
 
 # ============================================================
@@ -2109,6 +2151,10 @@ def gerar_relatorio(
         for ano in anos
     )
 
+    metodologia = _metodologia_padrao(
+        anos[0]
+    )
+
 
     # ========================================================
     # INDICADORES
@@ -2155,6 +2201,8 @@ def gerar_relatorio(
             "DUPONT": (
                 pd.DataFrame()
             ),
+
+            "METODOLOGIA": metodologia,
         }
 
 
@@ -2234,6 +2282,8 @@ def gerar_relatorio(
             "VALIDACAO": validacao,
 
             "DUPONT": dupont,
+
+            "METODOLOGIA": metodologia,
         }
 
 
@@ -2318,6 +2368,8 @@ def gerar_relatorio(
         "DUPONT": (
             dupont
         ),
+
+        "METODOLOGIA": metodologia,
     }
 
 

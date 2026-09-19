@@ -15,6 +15,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
     Image as ImagemReportLab,
+    KeepTogether,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -169,6 +170,27 @@ def _estilos() -> dict[str, ParagraphStyle]:
             leading=15,
             textColor=colors.HexColor("#172033"),
             spaceAfter=5 * mm,
+        ),
+        "subtitulo": ParagraphStyle(
+            "SubtituloSecao",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=15,
+            textColor=AZUL_TEXTO,
+            spaceBefore=2 * mm,
+            spaceAfter=2 * mm,
+        ),
+        "item": ParagraphStyle(
+            "ItemNarrativa",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=14,
+            leftIndent=4 * mm,
+            firstLineIndent=-3 * mm,
+            textColor=colors.HexColor("#172033"),
+            spaceAfter=3 * mm,
         ),
         "nota_tabela": ParagraphStyle(
             "NotaTabela",
@@ -833,6 +855,289 @@ def _adicionar_figuras(
         historia.extend([imagem, Spacer(1, 4 * mm)])
 
 
+def _conteudo_presente(valor: Any) -> bool:
+    if valor is None:
+        return False
+    if isinstance(valor, str):
+        return bool(valor.strip())
+    if isinstance(valor, Mapping):
+        return any(_conteudo_presente(item) for item in valor.values())
+    if hasattr(valor, "empty"):
+        return not bool(valor.empty)
+    if isinstance(valor, (list, tuple, set)):
+        return any(_conteudo_presente(item) for item in valor)
+    return True
+
+
+def _texto_celula_oficial(valor: Any) -> str:
+    if isinstance(valor, str):
+        return valor
+    if _eh_ausente(valor):
+        return "N/D"
+    return str(valor)
+
+
+def _rotulo_chave(chave: Any) -> str:
+    texto = str(chave).replace("_", " ").strip()
+    return texto.title() if texto.isupper() else texto
+
+
+def _montar_tabela_oficial(
+    quadro: Any,
+    estilos: Mapping[str, ParagraphStyle],
+    *,
+    evitar_linha_orfa: bool = False,
+) -> LongTable:
+    copia = quadro.copy(deep=True)
+    colunas = list(copia.columns)
+    pesos = {
+        "CATEGORIA": 1.5,
+        "ANO": 0.8,
+        "TESTE": 2.5,
+        "STATUS": 1.0,
+        "DETALHE": 4.2,
+        "INDICADOR": 1.0,
+        "NOME": 2.5,
+        "GRUPO": 1.8,
+        "UNIDADE": 0.8,
+        "FORMULA": 4.2,
+    }
+    pesos_colunas = [pesos.get(str(coluna).upper(), 1.5) for coluna in colunas]
+    largura_total = 170 * mm
+    soma_pesos = sum(pesos_colunas) or 1
+    larguras = [largura_total * peso / soma_pesos for peso in pesos_colunas]
+
+    dados = [
+        [
+            Paragraph(escape(str(coluna)), estilos["cabecalho_tabela"])
+            for coluna in colunas
+        ]
+    ]
+    for _, registro in copia.iterrows():
+        dados.append(
+            [
+                Paragraph(
+                    escape(_texto_celula_oficial(registro[coluna])),
+                    estilos["descricao_tabela"],
+                )
+                for coluna in colunas
+            ]
+        )
+
+    comandos = [
+        ("BACKGROUND", (0, 0), (-1, 0), AZUL_ESCURO),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.35, CINZA_BORDA),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for indice in range(1, len(dados)):
+        if indice % 2 == 0:
+            comandos.append(("BACKGROUND", (0, indice), (-1, indice), CINZA_FUNDO))
+
+    colunas_normalizadas = [str(coluna).upper() for coluna in colunas]
+    if "STATUS" in colunas_normalizadas:
+        coluna_status = colunas_normalizadas.index("STATUS")
+        cores_status = {
+            "INFO": colors.HexColor("#E8F1FA"),
+            "ALERTA": colors.HexColor("#FFF1CC"),
+            "BLOQUEIO": colors.HexColor("#FADBD8"),
+        }
+        for indice, (_, registro) in enumerate(copia.iterrows(), start=1):
+            status = str(registro[colunas[coluna_status]]).strip().upper()
+            if status in cores_status:
+                comandos.append(
+                    (
+                        "BACKGROUND",
+                        (coluna_status, indice),
+                        (coluna_status, indice),
+                        cores_status[status],
+                    )
+                )
+
+    tabela = LongTable(
+        dados,
+        colWidths=larguras,
+        repeatRows=1,
+        splitByRow=1,
+        rowSplitRange=(1, -2) if evitar_linha_orfa else None,
+        hAlign="LEFT",
+    )
+    tabela.setStyle(TableStyle(comandos))
+    return tabela
+
+
+def _adicionar_valor_oficial(
+    historia: list[Any],
+    valor: Any,
+    estilos: Mapping[str, ParagraphStyle],
+    *,
+    rotulo: str | None = None,
+    evitar_linha_orfa: bool = False,
+) -> None:
+    if not _conteudo_presente(valor):
+        return
+
+    if hasattr(valor, "columns") and hasattr(valor, "iterrows"):
+        tabela = _montar_tabela_oficial(
+            valor,
+            estilos,
+            evitar_linha_orfa=evitar_linha_orfa,
+        )
+        if rotulo and len(valor) <= 10:
+            historia.append(
+                KeepTogether(
+                    [
+                        Paragraph(escape(rotulo), estilos["subtitulo"]),
+                        tabela,
+                    ]
+                )
+            )
+        else:
+            if rotulo:
+                historia.append(
+                    Paragraph(escape(rotulo), estilos["subtitulo"])
+                )
+            historia.append(tabela)
+        return
+    if rotulo:
+        historia.append(Paragraph(escape(rotulo), estilos["subtitulo"]))
+    if isinstance(valor, Mapping):
+        for chave, item in valor.items():
+            _adicionar_valor_oficial(
+                historia,
+                item,
+                estilos,
+                rotulo=_rotulo_chave(chave),
+                evitar_linha_orfa=evitar_linha_orfa,
+            )
+        return
+    if isinstance(valor, (list, tuple, set)):
+        for item in valor:
+            if _conteudo_presente(item):
+                historia.append(
+                    Paragraph("- " + escape(str(item)), estilos["item"])
+                )
+        return
+    historia.append(Paragraph(escape(str(valor)), estilos["corpo"]))
+
+
+def _adicionar_narrativa(
+    historia: list[Any],
+    narrativa: Any,
+    layout: str,
+    estilos: Mapping[str, ParagraphStyle],
+) -> None:
+    if not isinstance(narrativa, Mapping):
+        return
+
+    secoes = [
+        ("SINTESES_GRUPOS", "Leitura integrada"),
+        ("PRINCIPAIS_MUDANCAS", "Principais mudanças"),
+        ("PONTOS_ATENCAO", "Pontos de atenção"),
+        ("CONCLUSAO", "Conclusão"),
+    ]
+    disponiveis = [
+        (chave, titulo)
+        for chave, titulo in secoes
+        if _conteudo_presente(narrativa.get(chave))
+    ]
+    if not disponiveis:
+        return
+
+    historia.append(PageBreak())
+    for indice, (chave, titulo) in enumerate(disponiveis):
+        estilo_titulo = "titulo" if indice == 0 else "subtitulo"
+        valor = narrativa[chave]
+        if (
+            hasattr(valor, "columns")
+            and hasattr(valor, "iterrows")
+            and len(valor) <= 10
+        ):
+            historia.append(
+                KeepTogether(
+                    [
+                        Paragraph(escape(titulo), estilos[estilo_titulo]),
+                        _montar_tabela_oficial(valor, estilos),
+                    ]
+                )
+            )
+            continue
+        historia.append(Paragraph(escape(titulo), estilos[estilo_titulo]))
+        _adicionar_valor_oficial(
+            historia,
+            valor,
+            estilos,
+        )
+
+
+def _adicionar_apendice(
+    historia: list[Any],
+    contexto: Mapping[str, Any],
+    estilos: Mapping[str, ParagraphStyle],
+) -> None:
+    blocos = [
+        ("METODOLOGIA", "Apêndice metodológico"),
+        ("VALIDACAO", "Validação e auditoria"),
+        ("FONTES", "Fontes"),
+    ]
+    for chave, titulo in blocos:
+        valor = contexto[chave]
+        if not _conteudo_presente(valor):
+            continue
+        historia.extend([PageBreak(), Paragraph(titulo, estilos["titulo"])])
+        if chave == "VALIDACAO" and isinstance(valor, Mapping):
+            for campo, conteudo in valor.items():
+                rotulo = _rotulo_chave(campo)
+                if (
+                    campo == "TABELA"
+                    and hasattr(conteudo, "iloc")
+                    and hasattr(conteudo, "columns")
+                    and not conteudo.empty
+                ):
+                    historia.append(
+                        Paragraph(escape(rotulo), estilos["subtitulo"])
+                    )
+                    quantidade_paginas = math.ceil(len(conteudo) / 28)
+                    tamanho_base, excedente = divmod(
+                        len(conteudo),
+                        quantidade_paginas,
+                    )
+                    inicio = 0
+                    for pagina in range(quantidade_paginas):
+                        tamanho = tamanho_base + (pagina < excedente)
+                        if pagina:
+                            historia.append(PageBreak())
+                        trecho = conteudo.iloc[
+                            inicio:inicio + tamanho
+                        ].copy(deep=True)
+                        historia.append(
+                            _montar_tabela_oficial(
+                                trecho,
+                                estilos,
+                                evitar_linha_orfa=True,
+                            )
+                        )
+                        inicio += tamanho
+                else:
+                    _adicionar_valor_oficial(
+                        historia,
+                        conteudo,
+                        estilos,
+                        rotulo=rotulo,
+                    )
+            continue
+        _adicionar_valor_oficial(
+            historia,
+            valor,
+            estilos,
+            evitar_linha_orfa=(chave == "VALIDACAO"),
+        )
+
+
 def _configurar_metadados(canvas, documento, metadados: Mapping[str, Any]) -> None:
     canvas.setTitle("Relatório Financeiro Profissional")
     canvas.setAuthor("Sistema CVM")
@@ -959,6 +1264,12 @@ def gerar_pdf_financeiro(
             Paragraph(escape(resumo), estilos["corpo"]),
         ]
     )
+    _adicionar_narrativa(
+        historia,
+        contexto["NARRATIVA"],
+        identificacao["LAYOUT"],
+        estilos,
+    )
     _adicionar_demonstracoes(historia, contexto, estilos)
     _adicionar_indicadores(
         historia,
@@ -973,6 +1284,7 @@ def gerar_pdf_financeiro(
         identificacao["LAYOUT"],
         estilos,
     )
+    _adicionar_apendice(historia, contexto, estilos)
 
     documento.build(
         historia,

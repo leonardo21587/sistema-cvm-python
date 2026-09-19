@@ -252,6 +252,25 @@ def _trajetoria_crescimento(
     return "desaceleração da taxa de crescimento"
 
 
+def _trajetoria_comparativa(
+    anterior,
+    recente,
+) -> str:
+    movimento = _movimento(
+        anterior,
+        recente,
+    )
+
+    return {
+        "↑": "aumento no período",
+        "↓": "redução no período",
+        "→": "praticamente estável no período",
+    }.get(
+        movimento,
+        "N/D",
+    )
+
+
 def _valor_setorial(
     dados: pd.DataFrame,
     codigo: str,
@@ -733,10 +752,20 @@ def _linha_analise(
 def _principais_mudancas(
     analise: pd.DataFrame,
     limite: int = 3,
+    *,
+    base_dados: pd.DataFrame | None = None,
+    anos: list[int] | None = None,
 ) -> list[
     str
 ]:
     candidatos = []
+    anos_ordenados = sorted(
+        {
+            int(ano)
+            for ano in (anos or [])
+        }
+    )
+    comparativo = len(anos_ordenados) == 2 and base_dados is not None
 
     for _, linha in analise.iterrows():
         codigo = str(
@@ -745,7 +774,20 @@ def _principais_mudancas(
             ]
         )
 
-        if codigo.startswith(
+        if comparativo:
+            valores = (
+                base_dados.loc[
+                    base_dados["INDICADOR"].eq(codigo)
+                    & base_dados["ANO"].isin(anos_ordenados)
+                ]
+                .set_index("ANO")["VALOR"]
+            )
+            referencia = _numero(valores.get(anos_ordenados[0]))
+            recente = _numero(valores.get(anos_ordenados[-1]))
+            delta = formatar_delta_pp(referencia, recente)
+            trajetoria = _trajetoria_comparativa(referencia, recente)
+
+        elif codigo.startswith(
             "CRESC_"
         ):
             referencia = _numero(
@@ -758,6 +800,8 @@ def _principais_mudancas(
                     "RECENTE"
                 ]
             )
+            delta = linha["DELTA"]
+            trajetoria = linha["TRAJETORIA"]
         else:
             referencia = _numero(
                 linha[
@@ -769,6 +813,8 @@ def _principais_mudancas(
                     "RECENTE"
                 ]
             )
+            delta = linha["DELTA"]
+            trajetoria = linha["TRAJETORIA"]
 
         if (
             referencia is None
@@ -788,8 +834,8 @@ def _principais_mudancas(
                     f"{codigo} — {linha['NOME']}: "
                     f"{_fmt_pct(referencia)} → "
                     f"{_fmt_pct(recente)} "
-                    f"({linha['DELTA']}; "
-                    f"{linha['TRAJETORIA']})."
+                    f"({delta}; "
+                    f"{trajetoria})."
                 ),
             )
         )
@@ -1021,7 +1067,9 @@ def gerar_relatorio_financeiro(
     )
 
     principais = _principais_mudancas(
-        analise
+        analise,
+        base_dados=base_dados,
+        anos=anos,
     )
 
     pontos = _pontos_atencao(

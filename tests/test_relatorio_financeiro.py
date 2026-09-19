@@ -204,6 +204,34 @@ def main() -> None:
         ].empty
     )
 
+    relatorio_comparativo = gerar_relatorio_financeiro(
+        CD_CVM_ITAU,
+        "ITAU UNIBANCO HOLDING S.A.",
+        [2024, 2025],
+    )
+    mudancas_comparativas = relatorio_comparativo[
+        "PRINCIPAIS_MUDANCAS"
+    ]
+    assert mudancas_comparativas
+    assert all("N/D" not in texto for texto in mudancas_comparativas)
+    assert all("no período" in texto for texto in mudancas_comparativas)
+    assert all("seguido" not in texto for texto in mudancas_comparativas)
+    assert all("trajetória" not in texto for texto in mudancas_comparativas)
+
+    mudancas_trajetoria = relatorio["PRINCIPAIS_MUDANCAS"]
+    assert mudancas_trajetoria
+    assert all("no período" not in texto for texto in mudancas_trajetoria)
+    assert any(
+        termo in texto
+        for texto in mudancas_trajetoria
+        for termo in (
+            "trajetória",
+            "seguido",
+            "aceleração",
+            "desaceleração",
+        )
+    )
+
     print()
     print(
         "STATUS:",

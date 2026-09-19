@@ -22,19 +22,27 @@ from src.contexto_relatorio import (  # noqa: E402
 from src.graficos import (  # noqa: E402
     montar_graficos_financeiros_setoriais,
 )
+from src.indicadores import (  # noqa: E402
+    FORMULAS as FORMULAS_PADRAO,
+    ORDEM_INDICADORES,
+)
 from src.pdf_financeiro import (  # noqa: E402
     FIGURAS_PERMITIDAS_POR_LAYOUT,
     INDICADORES_POR_LAYOUT,
     MIME_PDF,
     PeriodoInsuficientePDF,
+    _adicionar_apendice,
+    _adicionar_narrativa,
     _estilos,
     _formatar_valor_indicador,
     _formatar_valor_demonstracao,
     _figura_para_png,
     _montar_tabela_indicadores,
     _montar_tabela_demonstracao,
+    _montar_tabela_oficial,
     gerar_pdf_financeiro,
 )
+from src.relatorio import gerar_relatorio  # noqa: E402
 
 
 PNG_1X1 = base64.b64decode(
@@ -218,7 +226,24 @@ def _objetos_oficiais(layout: str, anos: list[int]) -> dict:
             "RESUMO_EXECUTIVO": (
                 "A análise oficial preserva acentuação, "
                 "sinais e limitações metodológicas."
-            )
+            ),
+            "SINTESES_GRUPOS": {
+                "Grupo oficial": "Leitura integrada oficial do grupo."
+            },
+            "PRINCIPAIS_MUDANCAS": [
+                "Mudança oficial com zero 0, N/D e N/A preservados."
+            ],
+            "PONTOS_ATENCAO": ["Ponto de atenção oficial."],
+            "CONCLUSAO": (
+                "Conclusão oficial do relatório com DuPont textual PADRAO."
+                if layout == "PADRAO"
+                else "Conclusão oficial do relatório."
+            ),
+            "DUPONT": (
+                pd.DataFrame([{"COMPONENTE": "DuPont oficial PADRAO"}])
+                if layout == "PADRAO"
+                else pd.DataFrame()
+            ),
         }
 
     return {
@@ -241,8 +266,13 @@ def _objetos_oficiais(layout: str, anos: list[int]) -> dict:
         "validacao": pd.DataFrame(
             [{"TESTE": "Sentinelas", "STATUS": "OK"}]
         ),
-        "metodologia": {"LAYOUT": layout},
-        "fontes": pd.DataFrame([{"FONTE": "CVM"}]),
+        "metodologia": {
+            "LAYOUT": layout,
+            "REGRA_OFICIAL": f"Metodologia oficial {layout}",
+        },
+        "fontes": pd.DataFrame(
+            [{"FONTE": "CVM", "REFERENCIA": "Fonte oficial do exercício"}]
+        ),
     }
 
 
@@ -577,6 +607,161 @@ def testar_figuras_no_pdf_por_layout() -> None:
         ) >= 8
 
 
+def _textos_fluxo(itens: list) -> list[str]:
+    textos = []
+    for item in itens:
+        if hasattr(item, "getPlainText"):
+            textos.append(item.getPlainText())
+        elif hasattr(item, "_cellvalues"):
+            for linha in item._cellvalues:
+                textos.extend(_textos_fluxo(list(linha)))
+        elif hasattr(item, "_content"):
+            textos.extend(_textos_fluxo(list(item._content)))
+        elif isinstance(item, str):
+            textos.append(item)
+    return textos
+
+
+def testar_narrativa_metodologia_validacao_e_fontes() -> None:
+    for layout in ("PADRAO", "FINANCEIRA"):
+        objetos = _objetos_oficiais(layout, [2023, 2024, 2025])
+        objetos["status_validacao"] = "BLOQUEIO"
+        objetos["validacao"] = pd.DataFrame(
+            [
+                {
+                    "CATEGORIA": "Integridade",
+                    "ANO": 2025,
+                    "TESTE": "Sentinela N/D",
+                    "STATUS": "ALERTA",
+                    "DETALHE": "N/D preservado pela validação oficial.",
+                },
+                {
+                    "CATEGORIA": "Metodologia",
+                    "ANO": 2025,
+                    "TESTE": "Sentinela N/A",
+                    "STATUS": "BLOQUEIO",
+                    "DETALHE": "N/A preservado pela validação oficial.",
+                },
+            ]
+        )
+        originais = deepcopy(objetos)
+        contexto = montar_contexto_relatorio(
+            **objetos,
+            modalidade="EXECUTIVO_ANALISTA",
+        )
+        resultado = gerar_pdf_financeiro(contexto, "EXECUTIVO_ANALISTA")
+        assert resultado["conteudo"].startswith(b"%PDF-")
+        fluxo = []
+        _adicionar_narrativa(
+            fluxo,
+            contexto["NARRATIVA"],
+            layout,
+            _estilos(),
+        )
+        _adicionar_apendice(fluxo, contexto, _estilos())
+        texto = "\n".join(_textos_fluxo(fluxo))
+
+        for trecho in (
+            "Grupo oficial",
+            "Leitura integrada oficial do grupo.",
+            "Mudança oficial com zero 0, N/D e N/A preservados.",
+            "Ponto de atenção oficial.",
+            "Conclusão oficial do relatório",
+            f"Metodologia oficial {layout}",
+            "ALERTA",
+            "BLOQUEIO",
+            "N/D preservado pela validação oficial.",
+            "N/A preservado pela validação oficial.",
+            "Fonte oficial do exercício",
+        ):
+            assert trecho in texto
+
+        assert "DuPont oficial PADRAO" not in texto
+        if layout == "PADRAO":
+            assert "DuPont textual PADRAO" in texto
+        else:
+            assert "DuPont textual PADRAO" not in texto
+
+        pd.testing.assert_frame_equal(
+            objetos["validacao"],
+            originais["validacao"],
+        )
+        pd.testing.assert_frame_equal(
+            objetos["fontes"],
+            originais["fontes"],
+        )
+        assert objetos["narrativa"].keys() == originais["narrativa"].keys()
+
+    objetos = _objetos_oficiais("FINANCEIRA", [2024, 2025])
+    objetos["narrativa"].pop("PONTOS_ATENCAO")
+    contexto = montar_contexto_relatorio(
+        **objetos,
+        modalidade="EXECUTIVO_ANALISTA",
+    )
+    fluxo = []
+    _adicionar_narrativa(
+        fluxo,
+        contexto["NARRATIVA"],
+        "FINANCEIRA",
+        _estilos(),
+    )
+    texto = "\n".join(_textos_fluxo(fluxo))
+    assert "Pontos de atenção" not in texto
+
+
+def testar_metodologia_padrao_e_paginacao_validacao() -> None:
+    relatorio = gerar_relatorio(
+        "004170",
+        "VALE S.A.",
+        [2023, 2024, 2025],
+    )
+    metodologia = relatorio["METODOLOGIA"]
+    assert metodologia["LAYOUT"] == "PADRAO"
+    assert metodologia["ANALISE_HORIZONTAL"][1] == "Ano-base = 2023 = 100."
+    indicadores = metodologia["INDICADORES"]
+    assert indicadores["INDICADOR"].tolist() == ORDEM_INDICADORES
+    assert dict(
+        zip(indicadores["INDICADOR"], indicadores["FORMULA"])
+    ) == FORMULAS_PADRAO
+
+    validacao = pd.DataFrame(
+        [
+            {
+                "CATEGORIA": "Integridade",
+                "ANO": 2025,
+                "TESTE": f"Teste {indice}",
+                "STATUS": "OK",
+                "DETALHE": "Linha oficial preservada.",
+            }
+            for indice in range(77)
+        ]
+    )
+    tabela = _montar_tabela_oficial(
+        validacao,
+        _estilos(),
+        evitar_linha_orfa=True,
+    )
+    assert tabela._rowSplitRange == (1, -2)
+    assert len(tabela._cellvalues) == 78
+
+    historia = []
+    _adicionar_apendice(
+        historia,
+        {
+            "METODOLOGIA": None,
+            "VALIDACAO": {
+                "STATUS_GERAL": "OK",
+                "TABELA": validacao,
+            },
+            "FONTES": None,
+        },
+        _estilos(),
+    )
+    tabelas = [item for item in historia if hasattr(item, "_cellvalues")]
+    assert [len(item._cellvalues) - 1 for item in tabelas] == [26, 26, 25]
+    assert sum(len(item._cellvalues) - 1 for item in tabelas) == 77
+
+
 def main() -> None:
     testar_contexto_temporal_e_sentinelas()
     testar_pdf_minimo_por_layout()
@@ -585,7 +770,9 @@ def main() -> None:
     testar_indicadores_por_layout_sem_recalculo()
     testar_graficos_financeiros_sem_recalculo()
     testar_figuras_no_pdf_por_layout()
-    print("RESULTADO: APROVADO - gráficos no PDF da C.5.")
+    testar_narrativa_metodologia_validacao_e_fontes()
+    testar_metodologia_padrao_e_paginacao_validacao()
+    print("RESULTADO: APROVADO - narrativa e apêndices no PDF da C.6.")
 
 
 if __name__ == "__main__":
