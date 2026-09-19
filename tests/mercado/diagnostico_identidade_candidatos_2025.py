@@ -12,6 +12,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 
+from src.mercado.classificacao import inferir_tipo_classe  # noqa: E402
+
 REPORTS_DIR = ROOT_DIR / "data" / "market" / "reports"
 DIAGNOSTICO = REPORTS_DIR / "catalogo_fca_2025_diagnostico.csv"
 CANDIDATOS = REPORTS_DIR / "catalogo_instrumentos_candidatos_2025.csv"
@@ -36,38 +38,14 @@ def _separar(valor: str) -> set[str]:
 
 
 def _classe_linha(linha: dict[str, str]) -> tuple[str | None, str | None]:
-    ticker = linha["TICKER"].strip().upper()
-    valor = linha["VALOR_MOBILIARIO"].strip().upper()
-    sigla = linha["SIGLA_CLASSE_PREF"].strip().upper()
-    composicao = linha["COMPOSICAO_BDR_UNIT"].strip()
-
-    if ticker.endswith("11"):
-        if "UNIT" in valor or composicao:
-            return "UNIT", "UNIT"
-        return None, None
-
-    if ticker.endswith("3"):
-        return "ACAO", "ON"
-
-    if ticker[-1:] in {"4", "5", "6", "7", "8"}:
-        if sigla in {"PN", "PNA", "PNB", "PNC", "PND"}:
-            return "ACAO", sigla
-
-        # FCA pode registrar a classe por extenso sem preencher a sigla.
-        classe_extenso = linha["CLASSE_PREF"].strip().upper()
-        mapa = {
-            "PREFERENCIAL": "PN",
-            "PREFERENCIAL CLASSE A": "PNA",
-            "PREFERENCIAL CLASSE B": "PNB",
-            "PREFERENCIAL CLASSE C": "PNC",
-            "PREFERENCIAL CLASSE D": "PND",
-        }
-        if classe_extenso in mapa:
-            return "ACAO", mapa[classe_extenso]
-
-        return None, None
-
-    return None, None
+    return inferir_tipo_classe(
+        ticker=linha["TICKER"],
+        valor_mobiliario=linha["VALOR_MOBILIARIO"],
+        sigla_classe_preferencial=linha["SIGLA_CLASSE_PREF"],
+        classe_preferencial=linha["CLASSE_PREF"],
+        composicao_unit=linha["COMPOSICAO_BDR_UNIT"],
+        especificacoes_cotahist=linha["ESPECIFICACOES_2025"],
+    )
 
 
 def _escrever(caminho: Path, linhas: list[dict], campos: list[str]) -> None:
@@ -187,7 +165,9 @@ def executar() -> None:
             }
         )
 
-    # Identidade candidata = companhia + ISIN. O ticker é atributo temporal.
+    # CD_CVM + ISIN é apenas uma chave diagnóstica provisória.
+    # ISIN também pode mudar ao longo da vida econômica do instrumento;
+    # portanto ele NÃO define sozinho o INSTRUMENTO_ID final.
     por_identidade: dict[tuple[str, str], list[dict]] = defaultdict(list)
     isin_cd_cvm: dict[str, set[str]] = defaultdict(set)
 
@@ -348,7 +328,10 @@ def executar() -> None:
         f"{tickers_multi_fca:,}"
     )
     print(f"Tickers normalizados sem bloqueio: {len(ticker_normalizado):,}")
-    print(f"Instrumentos candidatos por CD_CVM+ISIN: {len(por_identidade):,}")
+    print(
+        "Grupos provisórios por CD_CVM+ISIN: "
+        f"{len(por_identidade):,}"
+    )
     print(
         "Instrumentos com >1 ticker em 2025: "
         f"{instrumentos_multi_ticker:,}"
@@ -356,6 +339,45 @@ def executar() -> None:
     print(f"Instrumentos promovíveis como candidatos: {len(candidatos):,}")
     print(f"Itens para revisão: {len(revisao):,}")
     print()
+
+    por_companhia_classe: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for linha in ticker_normalizado:
+        por_companhia_classe[
+            (
+                linha["CD_CVM"],
+                linha["TIPO_ATIVO"],
+                linha["CLASSE"],
+            )
+        ].append(linha)
+
+    continuidades = [
+        (chave, grupo)
+        for chave, grupo in por_companhia_classe.items()
+        if len({linha["TICKER"] for linha in grupo}) > 1
+    ]
+
+    if continuidades:
+        print("MESMA COMPANHIA + CLASSE COM MÚLTIPLOS TICKERS EM 2025")
+        print("-" * 78)
+        for (cd_cvm, tipo, classe), grupo in sorted(continuidades)[:30]:
+            partes = []
+            for linha in sorted(
+                grupo,
+                key=lambda x: (
+                    x["PRIMEIRA_DATA_2025"],
+                    x["TICKER"],
+                ),
+            ):
+                partes.append(
+                    f"{linha['TICKER']}[{linha['ISIN']}]"
+                    f" {linha['PRIMEIRA_DATA_2025']}"
+                    f"→{linha['ULTIMA_DATA_2025']}"
+                )
+            print(
+                f"{cd_cvm} | {tipo}/{classe} | "
+                + " | ".join(partes)
+            )
+        print()
 
     multi = [
         linha
