@@ -19,6 +19,8 @@ def main() -> None:
 
     obs = ObservacaoTickerAno(
         ticker="TEST3",
+        tipo_ativo="ACAO",
+        classe="ON",
         primeira_data=date(2023, 1, 2),
         ultima_data=date(2023, 12, 28),
         pregoes=248,
@@ -28,6 +30,8 @@ def main() -> None:
     )
 
     assert obs.ticker == "TEST3"
+    assert obs.tipo_ativo == "ACAO"
+    assert obs.classe == "ON"
     assert obs.primeira_data < obs.ultima_data
     assert obs.pregoes > 0
     assert len(obs.isins) == 1

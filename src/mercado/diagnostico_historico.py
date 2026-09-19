@@ -14,17 +14,16 @@ from src.mercado.identidade import (
     InstrumentoNaoEncontrado,
     resolver_instrumento,
 )
-from src.mercado.providers.b3_cotahist import iterar_cotacoes
-from src.mercado.providers.cvm_fca import (
-    FcaValorMobiliario,
-    ticker_formato_elegivel,
-)
+from src.mercado.providers.cvm_fca import FcaValorMobiliario
+from src.mercado.universo import resumir_cotahist_ano
 from src.mercado.schema import criar_schema_identidade
 
 
 @dataclass(frozen=True)
 class ObservacaoTickerAno:
     ticker: str
+    tipo_ativo: str
+    classe: str
     primeira_data: date
     ultima_data: date
     pregoes: int
@@ -39,62 +38,34 @@ def agregar_cotahist_ano(
     ano: int,
 ) -> list[ObservacaoTickerAno]:
     """
-    Agrega somente mercado à vista (010) e tickers elegíveis de ações/Units.
+    Reusa a classificação oficial da D.4 para manter somente ações/Units.
 
-    Não tenta inferir identidade. Esta função apenas resume fatos observados
-    no COTAHIST oficial do ano.
+    Isso exclui FII, ETF, bônus, direitos, recibos e outros instrumentos cujo
+    ticker pode ter formato semelhante, mas cuja ESPECIFICAÇÃO B3 não pertence
+    ao escopo inicial.
     """
-    caminho = Path(caminho)
-    dados: dict[str, dict[str, object]] = {}
-
-    for cotacao in iterar_cotacoes(caminho):
-        if cotacao.data.year != ano:
-            raise RuntimeError(
-                f"{caminho.name}: registro {cotacao.data} fora do ano {ano}."
-            )
-        if cotacao.tipo_mercado != "010":
-            continue
-
-        ticker = cotacao.ticker.strip().upper()
-        if not ticker_formato_elegivel(ticker):
-            continue
-
-        item = dados.setdefault(
-            ticker,
-            {
-                "primeira": cotacao.data,
-                "ultima": cotacao.data,
-                "datas": set(),
-                "isins": set(),
-                "especificacoes": set(),
-                "nomes": set(),
-            },
-        )
-
-        item["primeira"] = min(item["primeira"], cotacao.data)
-        item["ultima"] = max(item["ultima"], cotacao.data)
-        item["datas"].add(cotacao.data)
-
-        if cotacao.isin:
-            item["isins"].add(cotacao.isin.strip().upper())
-        if cotacao.especificacao:
-            item["especificacoes"].add(
-                cotacao.especificacao.strip().upper()
-            )
-        if cotacao.nome_resumido:
-            item["nomes"].add(cotacao.nome_resumido.strip())
+    resumos = resumir_cotahist_ano(
+        caminho,
+        ano=ano,
+        tipo_mercado="010",
+    )
 
     return [
         ObservacaoTickerAno(
-            ticker=ticker,
-            primeira_data=item["primeira"],
-            ultima_data=item["ultima"],
-            pregoes=len(item["datas"]),
-            isins=tuple(sorted(item["isins"])),
-            especificacoes=tuple(sorted(item["especificacoes"])),
-            nomes_resumidos=tuple(sorted(item["nomes"])),
+            ticker=item.ticker,
+            tipo_ativo=item.tipo_ativo,
+            classe=item.classe,
+            primeira_data=item.primeira_data,
+            ultima_data=item.ultima_data,
+            pregoes=item.pregoes,
+            isins=item.isins,
+            especificacoes=item.especificacoes,
+            nomes_resumidos=(),
         )
-        for ticker, item in sorted(dados.items())
+        for item in sorted(
+            resumos.values(),
+            key=lambda x: x.ticker,
+        )
     ]
 
 
@@ -141,20 +112,33 @@ def _mapa_isin_catalogo(
 
 def _mapa_instrumentos_cd_cvm(
     con: duckdb.DuckDBPyConnection,
-) -> dict[str, set[int]]:
+) -> tuple[
+    dict[str, set[int]],
+    dict[tuple[str, str, str], set[int]],
+]:
     linhas = con.execute(
         """
-        SELECT INSTRUMENTO_ID, CD_CVM
+        SELECT INSTRUMENTO_ID, CD_CVM, TIPO_ATIVO, CLASSE
         FROM instrumentos
         """
     ).fetchall()
 
-    mapa: dict[str, set[int]] = {}
-    for instrumento_id, cd_cvm in linhas:
-        mapa.setdefault(str(cd_cvm).strip().zfill(6), set()).add(
-            int(instrumento_id)
-        )
-    return mapa
+    por_cd: dict[str, set[int]] = {}
+    por_cd_classe: dict[tuple[str, str, str], set[int]] = {}
+
+    for instrumento_id, cd_cvm, tipo, classe in linhas:
+        cd = str(cd_cvm).strip().zfill(6)
+        tipo = str(tipo).strip().upper()
+        classe = str(classe).strip().upper()
+        instrumento_id = int(instrumento_id)
+
+        por_cd.setdefault(cd, set()).add(instrumento_id)
+        por_cd_classe.setdefault(
+            (cd, tipo, classe),
+            set(),
+        ).add(instrumento_id)
+
+    return por_cd, por_cd_classe
 
 
 def _fca_por_ticker(
@@ -201,7 +185,9 @@ def diagnosticar_ano(
             reference_dir=reference_dir,
         )
         mapa_isin = _mapa_isin_catalogo(con)
-        instrumentos_por_cd = _mapa_instrumentos_cd_cvm(con)
+        instrumentos_por_cd, instrumentos_por_cd_classe = (
+            _mapa_instrumentos_cd_cvm(con)
+        )
 
         saida: list[dict[str, str]] = []
 
@@ -237,8 +223,15 @@ def diagnosticar_ano(
                 if cd in cd_cvm_sistema
             ]
             ids_fca: set[int] = set()
+            ids_fca_classe: set[int] = set()
             for cd in cds_fca_sistema:
                 ids_fca.update(instrumentos_por_cd.get(cd, set()))
+                ids_fca_classe.update(
+                    instrumentos_por_cd_classe.get(
+                        (cd, obs.tipo_ativo, obs.classe),
+                        set(),
+                    )
+                )
 
             problemas: list[str] = []
             candidato_id = ""
@@ -265,14 +258,25 @@ def diagnosticar_ano(
                 )
             elif len(cds_fca_sistema) == 1:
                 cd_cvm_candidato = cds_fca_sistema[0]
-                if len(ids_fca) == 1:
+                if len(ids_fca_classe) == 1:
+                    status = "CANDIDATO_FCA_ID_CLASSE"
+                    candidato_id = str(next(iter(ids_fca_classe)))
+                elif len(ids_fca_classe) > 1:
+                    status = "BLOQUEIO_FCA_CLASSE_MULTIPLA"
+                    problemas.append(
+                        "CD_CVM_TIPO_CLASSE_COM_MULTIPLOS_IDS:"
+                        + "|".join(
+                            str(x) for x in sorted(ids_fca_classe)
+                        )
+                    )
+                elif len(ids_fca) == 1:
                     status = "CANDIDATO_FCA_ID_UNICO"
                     candidato_id = str(next(iter(ids_fca)))
                 else:
                     status = "CANDIDATO_FCA_CD_CVM"
                     if len(ids_fca) > 1:
                         problemas.append(
-                            "CD_CVM_COM_MULTIPLOS_INSTRUMENTOS:"
+                            "CD_CVM_COM_MULTIPLOS_INSTRUMENTOS_SEM_MATCH_CLASSE:"
                             + "|".join(
                                 str(x) for x in sorted(ids_fca)
                             )
@@ -295,6 +299,8 @@ def diagnosticar_ano(
                 {
                     "ANO": str(ano),
                     "TICKER": obs.ticker,
+                    "TIPO_ATIVO": obs.tipo_ativo,
+                    "CLASSE": obs.classe,
                     "PRIMEIRA_DATA": obs.primeira_data.isoformat(),
                     "ULTIMA_DATA": obs.ultima_data.isoformat(),
                     "PREGOES": str(obs.pregoes),
@@ -312,6 +318,9 @@ def diagnosticar_ano(
                     ),
                     "IDS_POR_CD_CVM": "|".join(
                         str(x) for x in sorted(ids_fca)
+                    ),
+                    "IDS_POR_CD_CVM_CLASSE": "|".join(
+                        str(x) for x in sorted(ids_fca_classe)
                     ),
                     "CANDIDATO_INSTRUMENTO_ID": candidato_id,
                     "STATUS": status,
@@ -334,6 +343,8 @@ def escrever_diagnostico(
     campos = [
         "ANO",
         "TICKER",
+        "TIPO_ATIVO",
+        "CLASSE",
         "PRIMEIRA_DATA",
         "ULTIMA_DATA",
         "PREGOES",
@@ -348,6 +359,7 @@ def escrever_diagnostico(
         "CD_CVM_CANDIDATO",
         "IDS_POR_ISIN",
         "IDS_POR_CD_CVM",
+        "IDS_POR_CD_CVM_CLASSE",
         "CANDIDATO_INSTRUMENTO_ID",
         "STATUS",
         "PROBLEMAS",
