@@ -631,6 +631,74 @@ def construir_catalogo_temporal(
             if inicio_validado_proximo is not None:
                 inicio_proximo = inicio_validado_proximo
 
+            # Em uma continuidade multiticker já provada no COTAHIST 2025,
+            # a vigência do ticker sucessor começa na própria transição
+            # observada/validada. Datas cadastrais do FCA anteriores a essa
+            # troca descrevem o valor mobiliário, não necessariamente o código
+            # de negociação vigente, e não podem criar sobreposição de ticker.
+            nova_proximo = novas_linhas_por_ticker.get(
+                (instrumento_id, ticker_proximo)
+            )
+            if nova_proximo is not None:
+                inicio_inferido_proximo = _data(
+                    nova_proximo["DT_INICIO"]
+                )
+                if inicio_inferido_proximo < inicio_proximo:
+                    nova_proximo["DT_INICIO"] = inicio_proximo.isoformat()
+                    if "CONTINUIDADE_2025" not in nova_proximo["FONTE"]:
+                        nova_proximo["FONTE"] += "|CONTINUIDADE_2025"
+                elif inicio_inferido_proximo > inicio_proximo:
+                    revisao.append(
+                        {
+                            "NIVEL": "CONTINUIDADE",
+                            "CHAVE": (
+                                f"{ticker_atual}->{ticker_proximo}"
+                            ),
+                            "DETALHE": (
+                                "SUCESSOR_INICIA_APOS_TRANSICAO:"
+                                f"{inicio_inferido_proximo}>"
+                                f"{inicio_proximo}"
+                            ),
+                        }
+                    )
+                    continue
+            else:
+                linhas_proximo = [
+                    x
+                    for x in tickers
+                    if int(x["INSTRUMENTO_ID"]) == instrumento_id
+                    and x["BOLSA"] == "B3"
+                    and x["TICKER"] == ticker_proximo
+                    and _linha_existente_cobre_2025(
+                        x,
+                        primeira=_data(
+                            proximo["PRIMEIRA_DATA_2025"]
+                        ),
+                        ultima=_data(
+                            proximo["ULTIMA_DATA_2025"]
+                        ),
+                    )
+                ]
+                if len(linhas_proximo) == 1:
+                    inicio_existente_proximo = _data(
+                        linhas_proximo[0]["DT_INICIO"]
+                    )
+                    if inicio_existente_proximo != inicio_proximo:
+                        revisao.append(
+                            {
+                                "NIVEL": "CONTINUIDADE",
+                                "CHAVE": (
+                                    f"{ticker_atual}->{ticker_proximo}"
+                                ),
+                                "DETALHE": (
+                                    "INICIO_EXISTENTE_SUCESSOR_DIVERGE:"
+                                    f"{inicio_existente_proximo}!="
+                                    f"{inicio_proximo}"
+                                ),
+                            }
+                        )
+                        continue
+
             nova_atual = novas_linhas_por_ticker.get(
                 (instrumento_id, ticker_atual)
             )
@@ -925,6 +993,64 @@ def construir_catalogo_temporal(
                             "DETALHE": (
                                 "ISINS_DIFERENTES_SOBREPOSTOS:"
                                 f"{atual['VALOR']}~{proximo['VALOR']}"
+                            ),
+                        }
+                    )
+
+    # Replica no candidato o invariante D2 antes da materialização DuckDB:
+    # tickers diferentes do mesmo instrumento/bolsa nunca podem se sobrepor.
+    por_instrumento_bolsa: dict[
+        tuple[int, str],
+        list[dict[str, str]],
+    ] = {}
+    for linha in tickers:
+        por_instrumento_bolsa.setdefault(
+            (
+                int(linha["INSTRUMENTO_ID"]),
+                linha["BOLSA"],
+            ),
+            [],
+        ).append(linha)
+
+    for (instrumento_id, bolsa), linhas in por_instrumento_bolsa.items():
+        linhas = sorted(
+            linhas,
+            key=lambda x: (
+                _data(x["DT_INICIO"]),
+                x["TICKER"],
+            ),
+        )
+        for i, atual in enumerate(linhas):
+            inicio_a = _data(atual["DT_INICIO"])
+            fim_a = _data_opcional(atual.get("DT_FIM", ""))
+            for proximo in linhas[i + 1:]:
+                inicio_b = _data(proximo["DT_INICIO"])
+                if fim_a is not None and inicio_b >= fim_a:
+                    break
+
+                fim_b = _data_opcional(proximo.get("DT_FIM", ""))
+                sobrepoe = (
+                    inicio_a < (fim_b or date.max)
+                    and inicio_b < (fim_a or date.max)
+                )
+                if (
+                    sobrepoe
+                    and atual["TICKER"] != proximo["TICKER"]
+                ):
+                    revisao.append(
+                        {
+                            "NIVEL": "INVARIANTE_D2",
+                            "CHAVE": (
+                                f"{instrumento_id}|{bolsa}"
+                            ),
+                            "DETALHE": (
+                                "TICKERS_SOBREPOSTOS:"
+                                f"{atual['TICKER']}"
+                                f"[{atual['DT_INICIO']},"
+                                f"{atual['DT_FIM'] or '∞'})~"
+                                f"{proximo['TICKER']}"
+                                f"[{proximo['DT_INICIO']},"
+                                f"{proximo['DT_FIM'] or '∞'})"
                             ),
                         }
                     )
