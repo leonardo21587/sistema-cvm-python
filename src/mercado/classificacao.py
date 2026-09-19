@@ -131,10 +131,65 @@ def inferir_tipo_classe(
         if classe_extenso in mapa_extenso:
             return "ACAO", mapa_extenso[classe_extenso]
 
+        # O COTAHIST é a melhor evidência para distinguir PN/PNA/PNB...
+        # quando o FCA não preenche os campos específicos de classe.
         classes_pref_b3 = classes_b3 & {"PN", "PNA", "PNB", "PNC", "PND"}
         if len(classes_pref_b3) == 1:
             return "ACAO", next(iter(classes_pref_b3))
 
+        # Alguns registros FCA informam apenas "Ações Preferenciais" em
+        # Valor_Mobiliario, deixando Sigla/Classe vazias. Nesse caso a
+        # evidência é suficiente somente para a classe genérica PN.
+        if valor in {
+            "ACAO PREFERENCIAL",
+            "ACOES PREFERENCIAIS",
+            "ACOES PREFERENCIAL",
+            "PREFERENCIAL",
+        }:
+            return "ACAO", "PN"
+
         return None, None
 
     return None, None
+
+
+def instrumento_fca_no_escopo_inicial(
+    *,
+    ticker: str,
+    valor_mobiliario: object = "",
+    composicao_unit: object = "",
+    especificacoes_cotahist: object = "",
+) -> bool:
+    """
+    Decide se o valor mobiliário pertence ao escopo inicial da Fase D:
+    ações ON/PN e Units.
+
+    Bônus de subscrição, direitos, recibos e outros instrumentos temporários
+    permanecem explicitamente fora do catálogo inicial, mesmo que o código
+    termine em 11.
+    """
+    ticker = _normalizar_texto(ticker)
+    valor = _normalizar_texto(valor_mobiliario)
+    composicao = _normalizar_texto(composicao_unit)
+    classes_b3 = _classes_cotahist(especificacoes_cotahist)
+
+    termos_fora = {
+        "BONUS",
+        "DIREITO",
+        "RECIBO",
+        "SUBSCRICAO",
+        "DEBENTURE",
+        "OPCAO",
+    }
+    combinado = f"{valor} {composicao}"
+    if any(termo in combinado for termo in termos_fora):
+        return False
+
+    if ticker.endswith("11"):
+        return (
+            "UNIT" in valor
+            or "UNIT" in composicao
+            or "UNIT" in classes_b3
+        )
+
+    return ticker[-1:] in {"3", "4", "5", "6", "7", "8"}
