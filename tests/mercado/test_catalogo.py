@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
 
@@ -18,9 +19,18 @@ from src.mercado.identidade import resolver_instrumento  # noqa: E402
 from src.mercado.schema import criar_schema_mercado  # noqa: E402
 
 
+REFERENCE_DIR = ROOT_DIR / "data" / "reference" / "mercado"
+
+
+def _contar_csv(nome: str) -> int:
+    caminho = REFERENCE_DIR / nome
+    with caminho.open("r", encoding="utf-8-sig", newline="") as arquivo:
+        return sum(1 for _ in csv.DictReader(arquivo))
+
+
 def main():
     print("=" * 72)
-    print("SISTEMA CVM — TESTE D.3 — CATÁLOGO VERSIONADO")
+    print("SISTEMA CVM — TESTE D.3/D.4 — CATÁLOGO VERSIONADO")
     print("=" * 72)
 
     con = duckdb.connect(":memory:")
@@ -29,10 +39,13 @@ def main():
         resumo = carregar_catalogo_referencia(con)
 
         assert resumo == {
-            "instrumentos": 8,
-            "identificadores": 3,
-            "tickers": 9,
+            "instrumentos": _contar_csv("instrumentos.csv"),
+            "identificadores": _contar_csv("identificadores.csv"),
+            "tickers": _contar_csv("tickers_historico.csv"),
         }
+        assert resumo["instrumentos"] >= 8
+        assert resumo["identificadores"] >= 3
+        assert resumo["tickers"] >= 9
 
         assert resolver_instrumento(
             con,
@@ -67,6 +80,11 @@ def main():
     print("IDs estáveis versionados: aprovados")
     print("catálogo CSV -> DuckDB: aprovado")
     print("resolvedor temporal sobre catálogo: aprovado")
+    print(
+        f"Contagens atuais: {resumo['instrumentos']} instrumentos | "
+        f"{resumo['tickers']} vigências de ticker | "
+        f"{resumo['identificadores']} identificadores"
+    )
 
 
 if __name__ == "__main__":
