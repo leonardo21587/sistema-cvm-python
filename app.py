@@ -9,6 +9,7 @@ import streamlit.components.v1 as components
 
 from src.demonstracoes import (
     montar_quadro_demonstracao,
+    obter_metadados_fontes,
     resumo_empresa,
 )
 
@@ -42,6 +43,7 @@ from src.relatorio_financeiro import (
 from src.graficos import (
     montar_cards_dashboard,
     montar_graficos_dashboard,
+    montar_graficos_financeiros_setoriais,
 )
 
 from src.validacao import (
@@ -52,6 +54,10 @@ from src.validacao import (
 from src.exportacao import (
     gerar_excel_sistema,
     nome_arquivo_exportacao,
+)
+
+from src.contexto_relatorio import (
+    montar_contexto_relatorio,
 )
 
 
@@ -2396,6 +2402,47 @@ if empresa_selecionada is not None:
         nome_arquivo_excel = None
         erro_exportacao = erro
 
+    # O PDF é preparado sob demanda para não executar Kaleido/Chrome
+    # em todo rerun do Streamlit. O resultado fica em sessão somente
+    # enquanto companhia, período e layout permanecerem os mesmos.
+    pdf_periodo_insuficiente = len(anos_tuple) < 2
+
+    layout_pdf = (
+        "FINANCEIRA"
+        if "FINANCEIRA" in layouts_detectados
+        else "PADRAO"
+        if "PADRAO" in layouts_detectados
+        else None
+    )
+
+    chave_pdf = (
+        f"{cd_cvm}|{layout_pdf}|"
+        + ",".join(
+            str(ano)
+            for ano in anos_tuple
+        )
+    )
+
+    estado_pdf = st.session_state.get(
+        "exportacao_pdf_profissional"
+    )
+
+    if (
+        not isinstance(estado_pdf, dict)
+        or estado_pdf.get("CHAVE") != chave_pdf
+    ):
+        st.session_state.pop(
+            "exportacao_pdf_profissional",
+            None,
+        )
+        estado_pdf = None
+
+    resultado_pdf = (
+        estado_pdf.get("RESULTADO")
+        if isinstance(estado_pdf, dict)
+        else None
+    )
+    erro_pdf = None
 
     st.divider()
 
@@ -2403,16 +2450,17 @@ if empresa_selecionada is not None:
         "### Exportar análise"
     )
 
-    coluna_exportar, coluna_descricao = (
+    coluna_excel, coluna_pdf, coluna_descricao = (
         st.columns(
             [
+                1,
                 1,
                 3,
             ]
         )
     )
 
-    with coluna_exportar:
+    with coluna_excel:
 
         if arquivo_excel is not None:
 
@@ -2436,18 +2484,177 @@ if empresa_selecionada is not None:
         else:
 
             st.button(
-                "Exportação indisponível",
+                "Excel indisponível",
                 disabled=True,
                 use_container_width=True,
+                key=(
+                    f"excel_indisponivel_"
+                    f"{cd_cvm}_"
+                    f"{ano_recente}"
+                ),
             )
+
+    with coluna_pdf:
+
+        if pdf_periodo_insuficiente:
+
+            st.button(
+                "PDF indisponível",
+                disabled=True,
+                use_container_width=True,
+                key=(
+                    f"pdf_indisponivel_"
+                    f"{cd_cvm}_"
+                    f"{ano_recente}"
+                ),
+            )
+
+        elif resultado_pdf is not None:
+
+            st.download_button(
+                label="Baixar relatório PDF",
+                data=resultado_pdf["conteudo"],
+                file_name=resultado_pdf["nome_arquivo"],
+                mime=resultado_pdf["mime"],
+                use_container_width=True,
+                type="primary",
+                key=(
+                    f"download_pdf_"
+                    f"{cd_cvm}_"
+                    f"{ano_recente}"
+                ),
+            )
+
+        elif not isinstance(relatorio, dict) or layout_pdf is None:
+
+            st.button(
+                "PDF indisponível",
+                disabled=True,
+                use_container_width=True,
+                key=(
+                    f"pdf_sem_relatorio_"
+                    f"{cd_cvm}_"
+                    f"{ano_recente}"
+                ),
+            )
+
+        elif st.button(
+            "Preparar relatório PDF",
+            use_container_width=True,
+            key=(
+                f"preparar_pdf_"
+                f"{cd_cvm}_"
+                f"{ano_recente}"
+            ),
+        ):
+
+            try:
+                with st.spinner(
+                    "Gerando relatório PDF profissional..."
+                ):
+                    # Importação tardia: uma falha da camada PDF
+                    # não impede o restante do aplicativo de iniciar.
+                    from src.pdf_financeiro import gerar_pdf_financeiro
+
+                    fontes_pdf = {
+                        demonstracao: obter_metadados_fontes(
+                            cd_cvm=cd_cvm,
+                            demonstracao=demonstracao,
+                            anos=list(anos_tuple),
+                        )
+                        for demonstracao in (
+                            "BPA",
+                            "BPP",
+                            "DRE",
+                        )
+                    }
+
+                    if layout_pdf == "FINANCEIRA":
+                        base_oficial_pdf = relatorio[
+                            "INDICADORES_SETORIAIS"
+                        ]
+
+                        figuras_pdf = (
+                            montar_graficos_financeiros_setoriais(
+                                base_oficial_pdf,
+                                anos_tuple,
+                            )
+                        )
+
+                        figura_rentabilidade = (
+                            graficos_dashboard.get(
+                                "rentabilidade"
+                            )
+                        )
+
+                        if figura_rentabilidade is not None:
+                            figuras_pdf[
+                                "rentabilidade"
+                            ] = figura_rentabilidade
+
+                    else:
+                        base_oficial_pdf = quadro_inds
+                        figuras_pdf = dict(
+                            graficos_dashboard
+                        )
+
+                    contexto_pdf = montar_contexto_relatorio(
+                        identificacao={
+                            "DENOM_CIA": nome,
+                            "CD_CVM": cd_cvm,
+                            "CNPJ_CIA": cnpj,
+                            "LAYOUT_CVM": layout_pdf,
+                            "FONTE": "DFP consolidadas / CVM",
+                        },
+                        anos=anos_tuple,
+                        demonstracoes={
+                            "BPA": bpa,
+                            "BPP": bpp,
+                            "DRE": dre,
+                        },
+                        indicadores={
+                            "ANALISE": relatorio[
+                                "ANALISE_INDICADORES"
+                            ],
+                            "BASE_OFICIAL": base_oficial_pdf,
+                        },
+                        narrativa=relatorio,
+                        status_validacao=(
+                            status_validacao_atual
+                        ),
+                        validacao=validacao,
+                        metodologia=relatorio.get(
+                            "METODOLOGIA"
+                        ),
+                        fontes=fontes_pdf,
+                        modalidade="EXECUTIVO_ANALISTA",
+                        figuras=figuras_pdf,
+                    )
+
+                    resultado_gerado = gerar_pdf_financeiro(
+                        contexto_pdf,
+                        "EXECUTIVO_ANALISTA",
+                    )
+
+                    st.session_state[
+                        "exportacao_pdf_profissional"
+                    ] = {
+                        "CHAVE": chave_pdf,
+                        "RESULTADO": resultado_gerado,
+                    }
+
+                st.rerun()
+
+            except Exception as erro:
+                erro_pdf = erro
 
     with coluna_descricao:
 
         st.caption(
-            "O arquivo inclui Identificação, BP Ativo, BP Passivo, "
-            "DRE, os indicadores aplicáveis, Relatório e Validação/Auditoria. "
-            "A exportação utiliza os mesmos resultados exibidos no "
-            "sistema e não recalcula os indicadores."
+            "O Excel e o PDF utilizam os mesmos resultados oficiais "
+            "já calculados pelo sistema. O PDF profissional reúne "
+            "demonstrações, indicadores, gráficos, narrativa, "
+            "metodologia, validação e fontes sem recalcular a análise."
         )
 
         if erro_exportacao is not None:
@@ -2458,7 +2665,7 @@ if empresa_selecionada is not None:
             )
 
             with st.expander(
-                "Detalhes técnicos da exportação"
+                "Detalhes técnicos da exportação Excel"
             ):
 
                 st.exception(
@@ -2468,8 +2675,62 @@ if empresa_selecionada is not None:
         elif financeira_periodo_insuficiente:
 
             st.warning(
-                "A exportação completa exige pelo menos "
+                "A exportação completa em Excel exige pelo menos "
                 "dois exercícios para o layout FINANCEIRA."
+            )
+
+        if pdf_periodo_insuficiente:
+
+            st.warning(
+                "O relatório PDF profissional exige pelo menos "
+                "dois exercícios."
+            )
+
+        elif layout_pdf is None or not isinstance(relatorio, dict):
+
+            st.warning(
+                "O relatório PDF não está disponível para "
+                "o contexto atual."
+            )
+
+        elif erro_pdf is not None:
+
+            mensagem_erro_pdf = str(erro_pdf).lower()
+            falha_renderizacao = any(
+                termo in mensagem_erro_pdf
+                for termo in (
+                    "kaleido",
+                    "chrome",
+                    "chromium",
+                )
+            )
+
+            st.warning(
+                (
+                    "Não foi possível renderizar o PDF. A exportação "
+                    "estática dos gráficos requer Kaleido e "
+                    "Chrome/Chromium disponíveis no ambiente."
+                )
+                if falha_renderizacao
+                else (
+                    "A análise permanece disponível no sistema, "
+                    "mas não foi possível gerar o relatório PDF."
+                )
+            )
+
+            with st.expander(
+                "Detalhes técnicos da exportação PDF"
+            ):
+                st.exception(
+                    erro_pdf
+                )
+
+        elif resultado_pdf is None:
+
+            st.caption(
+                "Clique em **Preparar relatório PDF** para gerar "
+                "o arquivo sob demanda. Isso evita executar a "
+                "renderização dos gráficos a cada atualização da tela."
             )
 
 
