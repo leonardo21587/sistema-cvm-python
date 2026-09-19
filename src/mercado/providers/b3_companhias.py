@@ -160,10 +160,16 @@ def listar_companhias_b3(
 
     saida = []
     for item in dados.get("results") or []:
+        # O endpoint pode retornar entidades de tipos distintos. Para o
+        # universo de companhias listadas usamos type=1 quando o campo
+        # estiver presente; se não vier, não descartamos a linha.
+        tipo = str(item.get("type") or "").strip()
+        if tipo and tipo != "1":
+            continue
+
         cd_cvm = _normalizar_cd_cvm(
             item.get("codeCVM")
             or item.get("codeCvm")
-            or item.get("code")
         )
         if not cd_cvm:
             continue
@@ -202,13 +208,29 @@ def detalhar_companhia_b3(
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     cache = RAW_DIR / f"detail_{cd_cvm}.json"
 
+    objeto = None
+
     if usar_cache and cache.is_file():
         objeto = json.loads(cache.read_text(encoding="utf-8"))
-    else:
+
+        # Versões anteriores consultavam GetDetail com CD_CVM preenchido
+        # com zeros à esquerda. A B3 espera o código numérico em forma
+        # canônica (ex.: 9512, não 009512). Se o cache estiver vazio,
+        # refazemos automaticamente a consulta correta.
+        cache_vazio = (
+            objeto is None
+            or objeto == {}
+            or objeto == []
+        )
+        if cache_vazio:
+            objeto = None
+
+    if objeto is None:
+        codigo_consulta = str(int(cd_cvm))
         objeto = _get_json(
             URL_DETALHE,
             {
-                "codeCVM": cd_cvm,
+                "codeCVM": codigo_consulta,
                 "language": "pt-br",
             },
         )
