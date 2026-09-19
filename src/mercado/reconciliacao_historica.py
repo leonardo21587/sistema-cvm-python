@@ -90,6 +90,7 @@ def reconciliar_diagnostico(
     registros_fca_por_ano: dict[int, list[FcaValorMobiliario]],
     cd_cvm_sistema: set[str],
     excecoes_validadas: Iterable[dict[str, str]] = (),
+    cnpj_sistema_para_cd_cvm: dict[str, str] | None = None,
 ) -> list[ResultadoReconciliacaoHistorica]:
     """
     Segunda passada conservadora para um ano histórico.
@@ -103,6 +104,7 @@ def reconciliar_diagnostico(
     instrumentos = list(instrumentos)
     por_chave, por_cd = _indice_catalogo(instrumentos)
     fca = _fca_por_ticker(registros_fca_por_ano)
+    cnpj_sistema_para_cd_cvm = cnpj_sistema_para_cd_cvm or {}
     excecao_por_ticker = {
         linha.get("TICKER", "").strip().upper(): linha
         for linha in excecoes_validadas
@@ -251,12 +253,23 @@ def reconciliar_diagnostico(
 
         # Para casos fracos/sem evidência, usa FCA adjacente 2022–2024.
         itens = fca.get(ticker, [])
-        cds = sorted({
-            registro.cd_cvm.zfill(6)
-            for _, registro in itens
-            if registro.cd_cvm
-            and registro.cd_cvm.zfill(6) in cd_cvm_sistema
-        })
+        cds_candidatos: set[str] = set()
+
+        for _, registro in itens:
+            if registro.cd_cvm:
+                cd = registro.cd_cvm.zfill(6)
+                if cd in cd_cvm_sistema:
+                    cds_candidatos.add(cd)
+
+            cnpj = "".join(
+                ch for ch in str(registro.cnpj or "")
+                if ch.isdigit()
+            ).zfill(14)
+            cd_por_cnpj = cnpj_sistema_para_cd_cvm.get(cnpj)
+            if cd_por_cnpj:
+                cds_candidatos.add(cd_por_cnpj.zfill(6))
+
+        cds = sorted(cds_candidatos)
 
         if len(cds) > 1:
             saida.append(
